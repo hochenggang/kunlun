@@ -22,7 +22,7 @@ Kunlun 是一个基于 C 语言实现的高效、轻量级系统监控工具，�
 使用以下命令下载并运行安装脚本：
 
 ```bash
-curl -L https://github.com/hochenggang/kunlun/raw/refs/tags/v0.0.1/kunlun-client-install.sh -o kunlun-client-install.sh
+curl -L https://github.com/hochenggang/kunlun/raw/refs/heads/main/kunlun-client-install.sh -o kunlun-client-install.sh
 chmod +x kunlun-client-install.sh
 ./kunlun-client-install.sh
 ```
