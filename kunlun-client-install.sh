@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# 检查是否为 root 用户
+if [ "$EUID" -eq 0 ]; then
+    IS_ROOT=true
+else
+    IS_ROOT=false
+fi
+
 # 识别发行版
 if [ -f /etc/os-release ]; then
     . /etc/os-release
@@ -15,14 +22,25 @@ install_kunlun() {
     echo "安装 curl..."
     case $OS in
         ubuntu|debian)
-            sudo apt update
-            sudo apt install -y curl
+            if $IS_ROOT; then
+                apt install -y curl
+            else
+                sudo apt install -y curl
+            fi
             ;;
         centos|rhel|fedora)
-            sudo yum install -y curl
+            if $IS_ROOT; then
+                yum install -y curl
+            else
+                sudo yum install -y curl
+            fi
             ;;
         arch)
-            sudo pacman -S --noconfirm curl
+            if $IS_ROOT; then
+                pacman -S --noconfirm curl
+            else
+                sudo pacman -S --noconfirm curl
+            fi
             ;;
         *)
             echo "不支持的发行版: $OS"
@@ -61,7 +79,8 @@ install_kunlun() {
     SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME.service"
 
     # 创建 systemd 服务文件
-    sudo bash -c "cat > $SERVICE_PATH" <<EOF
+    if $IS_ROOT; then
+        cat > "$SERVICE_PATH" <<EOF
 [Unit]
 Description=Kunlun System Monitor
 After=network.target
@@ -75,17 +94,42 @@ Environment=HOME=$HOME
 [Install]
 WantedBy=multi-user.target
 EOF
+    else
+        sudo bash -c "cat > $SERVICE_PATH" <<EOF
+[Unit]
+Description=Kunlun System Monitor
+After=network.target
+
+[Service]
+ExecStart=$HOME/bin/kunlun_amd64 -s $INTERVAL -u $REPORT_URL
+Restart=always
+User=$USER
+Environment=HOME=$HOME
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    fi
 
     # 重载 systemd 配置
-    sudo systemctl daemon-reload
+    if $IS_ROOT; then
+        systemctl daemon-reload
+    else
+        sudo systemctl daemon-reload
+    fi
 
     # 启动并启用服务
-    sudo systemctl start $SERVICE_NAME
-    sudo systemctl enable $SERVICE_NAME
+    if $IS_ROOT; then
+        systemctl start $SERVICE_NAME
+        systemctl enable $SERVICE_NAME
+    else
+        sudo systemctl start $SERVICE_NAME
+        sudo systemctl enable $SERVICE_NAME
+    fi
 
     echo "Kunlun 已安装并启动！"
     echo "使用以下命令查看状态："
-    echo "systemctl status $SERVICE_NAME"
+    echo "sudo systemctl status $SERVICE_NAME"
 }
 
 # 卸载 Kunlun
@@ -96,18 +140,31 @@ uninstall_kunlun() {
     # 停止并禁用服务
     if systemctl is-active --quiet $SERVICE_NAME; then
         echo "停止 Kunlun 服务..."
-        sudo systemctl stop $SERVICE_NAME
+        if $IS_ROOT; then
+            systemctl stop $SERVICE_NAME
+        else
+            sudo systemctl stop $SERVICE_NAME
+        fi
     fi
     if systemctl is-enabled --quiet $SERVICE_NAME; then
         echo "禁用 Kunlun 服务..."
-        sudo systemctl disable $SERVICE_NAME
+        if $IS_ROOT; then
+            systemctl disable $SERVICE_NAME
+        else
+            sudo systemctl disable $SERVICE_NAME
+        fi
     fi
 
     # 删除服务文件
     if [ -f "$SERVICE_PATH" ]; then
         echo "删除 systemd 服务文件..."
-        sudo rm -f "$SERVICE_PATH"
-        sudo systemctl daemon-reload
+        if $IS_ROOT; then
+            rm -f "$SERVICE_PATH"
+            systemctl daemon-reload
+        else
+            sudo rm -f "$SERVICE_PATH"
+            sudo systemctl daemon-reload
+        fi
     fi
 
     # 删除二进制文件
