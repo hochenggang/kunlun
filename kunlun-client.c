@@ -9,24 +9,23 @@
 #include <time.h>
 #include <getopt.h>
 
-
-// 简单计算圆周率并返回时间（毫秒）
-long calculate_pi(int iterations) {
-    double pi = 0.0;
-    int sign = 1;  // 符号位，用于交替加减
-    struct timespec start, end;
-
-    clock_gettime(CLOCK_MONOTONIC, &start);  // 记录开始时间
-
-    for (int i = 0; i < iterations; i++) {
-        pi += sign * (4.0 / (2 * i + 1));  // 莱布尼茨级数公式
-        sign *= -1;  // 符号交替
+// 获取 CPU 逻辑核心数（siblings）
+int get_cpu_siblings() {
+    FILE *fp = fopen("/proc/cpuinfo", "r");
+    if (!fp) {
+        perror("Failed to open /proc/cpuinfo");
+        return -1;
     }
-
-    clock_gettime(CLOCK_MONOTONIC, &end);  // 记录结束时间
-
-    // 返回计算时间（毫秒）
-    return (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000;
+    char line[256];
+    int siblings = -1;
+    while (fgets(line, sizeof(line), fp)) {
+        if (strncmp(line, "siblings", 8) == 0) {
+            sscanf(line, "siblings : %d", &siblings);
+            break;
+        }
+    }
+    fclose(fp);
+    return siblings;
 }
 
 // 获取系统运行时间
@@ -112,9 +111,8 @@ void get_cpu_usage(double *cpu_user, double *cpu_system, double *cpu_nice, doubl
     }
     fclose(fp);
 }
-
-// 获取内存使用情况
-void get_memory_usage(unsigned long *mem_total, unsigned long *mem_free, unsigned long *mem_used, unsigned long *mem_buffers, unsigned long *mem_cached) {
+// 获取内存使用情况（单位：字节）
+void get_memory_usage(unsigned long *mem_total, unsigned long *mem_free, unsigned long *mem_available) {
     FILE *fp = fopen("/proc/meminfo", "r");
     if (!fp) {
         perror("Failed to open /proc/meminfo");
@@ -124,19 +122,20 @@ void get_memory_usage(unsigned long *mem_total, unsigned long *mem_free, unsigne
     while (fgets(line, sizeof(line), fp)) {
         if (strncmp(line, "MemTotal:", 9) == 0) {
             sscanf(line + 9, "%lu", mem_total);
+            *mem_total *= 1024; // 转换为字节
         } else if (strncmp(line, "MemFree:", 8) == 0) {
             sscanf(line + 8, "%lu", mem_free);
-        } else if (strncmp(line, "Buffers:", 8) == 0) {
-            sscanf(line + 8, "%lu", mem_buffers);
-        } else if (strncmp(line, "Cached:", 7) == 0) {
-            sscanf(line + 7, "%lu", mem_cached);
+            *mem_free *= 1024; // 转换为字节
+        } else if (strncmp(line, "MemAvailable:", 13) == 0) {
+            sscanf(line + 13, "%lu", mem_available);
+            *mem_available *= 1024; // 转换为字节
         }
     }
-    *mem_used = *mem_total - *mem_free - *mem_buffers - *mem_cached;
     fclose(fp);
 }
 
-// 获取网络流量
+
+// 获取网络流量（单位：字节）
 void get_network_usage(unsigned long *net_tx, unsigned long *net_rx) {
     FILE *fp = fopen("/proc/net/dev", "r");
     if (!fp) {
@@ -192,6 +191,28 @@ int get_tcp_connections() {
     return count;
 }
 
+
+
+// 简单计算圆周率并返回时间（毫秒）
+long calculate_pi(int iterations) {
+    double pi = 0.0;
+    int sign = 1;  // 符号位，用于交替加减
+    struct timespec start, end;
+
+    clock_gettime(CLOCK_MONOTONIC, &start);  // 记录开始时间
+
+    for (int i = 0; i < iterations; i++) {
+        pi += sign * (4.0 / (2 * i + 1));  // 莱布尼茨级数公式
+        sign *= -1;  // 符号交替
+    }
+
+    clock_gettime(CLOCK_MONOTONIC, &end);  // 记录结束时间
+
+    // 返回计算时间（毫秒）
+    return (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000;
+}
+
+
 // 拼接字符串
 void append_str(char *dest, size_t dest_size, const char *name, const char *value) {
     snprintf(dest + strlen(dest), dest_size - strlen(dest), "%s=%s&", name, value);
@@ -241,10 +262,11 @@ int main(int argc, char *argv[]) {
         get_load_avg(&load_1min, &load_5min, &load_15min);
         int total_tasks, running_tasks, sleeping_tasks, stopped_tasks, zombie_tasks;
         get_task_info(&total_tasks, &running_tasks, &sleeping_tasks, &stopped_tasks, &zombie_tasks);
+        int cpu_siblings = get_cpu_siblings();
         double cpu_user, cpu_system, cpu_nice, cpu_idle, cpu_iowait, cpu_irq, cpu_softirq, cpu_steal;
         get_cpu_usage(&cpu_user, &cpu_system, &cpu_nice, &cpu_idle, &cpu_iowait, &cpu_irq, &cpu_softirq, &cpu_steal);
-        unsigned long mem_total, mem_free, mem_used, mem_buffers, mem_cached;
-        get_memory_usage(&mem_total, &mem_free, &mem_used, &mem_buffers, &mem_cached);
+        unsigned long mem_total, mem_free, mem_available;
+        get_memory_usage(&mem_total, &mem_free, &mem_available);
         unsigned long net_tx, net_rx;
         get_network_usage(&net_tx, &net_rx);
         long disk_delay = get_disk_delay();
@@ -271,6 +293,8 @@ int main(int argc, char *argv[]) {
         append_str(post_data, sizeof(post_data), "stopped_tasks", temp_buffer);
         sprintf(temp_buffer, "%d", zombie_tasks);
         append_str(post_data, sizeof(post_data), "zombie_tasks", temp_buffer);
+        sprintf(temp_buffer, "%d", cpu_siblings);
+        append_str(post_data, sizeof(post_data), "cpu_siblings", temp_buffer);
         sprintf(temp_buffer, "%.2f", cpu_user);
         append_str(post_data, sizeof(post_data), "cpu_user", temp_buffer);
         sprintf(temp_buffer, "%.2f", cpu_system);
@@ -291,8 +315,8 @@ int main(int argc, char *argv[]) {
         append_str(post_data, sizeof(post_data), "mem_total", temp_buffer);
         sprintf(temp_buffer, "%lu", mem_free);
         append_str(post_data, sizeof(post_data), "mem_free", temp_buffer);
-        sprintf(temp_buffer, "%lu", mem_used);
-        append_str(post_data, sizeof(post_data), "mem_used", temp_buffer);
+        sprintf(temp_buffer, "%lu", mem_available);
+        append_str(post_data, sizeof(post_data), "mem_available", temp_buffer);
         sprintf(temp_buffer, "%lu", net_tx);
         append_str(post_data, sizeof(post_data), "net_tx", temp_buffer);
         sprintf(temp_buffer, "%lu", net_rx);
