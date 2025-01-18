@@ -92,40 +92,73 @@ systemctl status kunlun
 
 Kunlun 采集的指标数据包括以下字段：
 
-| 字段名           | 描述                         | 示例值       |
-|------------------|------------------------------|--------------|
-| `uptime`         | 系统运行时间（秒）            | `1485256`    |
-| `load_1min`      | 1 分钟平均负载                | `0.02`       |
-| `load_5min`      | 5 分钟平均负载                | `0.03`       |
-| `load_15min`     | 15 分钟平均负载               | `0.00`       |
-| `total_tasks`    | 总任务数                      | `512`        |
-| `running_tasks`  | 运行中的任务数                | `1`          |
-| `sleeping_tasks` | 休眠中的任务数                | `0`          |
-| `stopped_tasks`  | 停止的任务数                  | `512`        |
-| `zombie_tasks`   | 僵尸任务数                    | `0`          |
-| `cpu_user`       | 用户态 CPU 使用率（百分比）   | `2.87`       |
-| `cpu_system`     | 内核态 CPU 使用率（百分比）   | `0.23`       |
-| `cpu_nice`       | 优先级调整 CPU 使用率（百分比）| `0.00`       |
-| `cpu_idle`       | 空闲 CPU 时间（百分比）       | `96.89`      |
-| `cpu_iowait`     | I/O 等待 CPU 时间（百分比）   | `0.01`       |
-| `cpu_irq`        | 硬件中断 CPU 时间（百分比）   | `0.00`       |
-| `cpu_softirq`    | 软件中断 CPU 时间（百分比）   | `0.01`       |
-| `cpu_steal`      | 虚拟机偷取 CPU 时间（百分比） | `0.00`       |
-| `mem_total`      | 总内存大小（KB）              | `2027040`    |
-| `mem_free`       | 空闲内存大小（KB）            | `87460`      |
-| `mem_used`       | 已用内存大小（KB）            | `1939580`    |
-| `net_tx`         | 总发送数据量（MB）            | `127804`     |
-| `net_rx`         | 总接收数据量（MB）            | `464394`     |
-| `disk_delay`     | 磁盘延迟（微秒）              | `2872`       |
-| `tcp_connections`| 当前 TCP 连接数               | `11`         |
-| `cpu_delay`      | CPU 延迟（微秒）              | `123456`     |
 
-#### 数据格式
+程序会将采集到的数据格式化为键值对，并通过 HTTP POST 请求发送。以下是参数的详细说明：
 
-采集到的数据会以 `name1=value1&name2=value2` 的形式拼接，并通过 HTTP POST 请求发送到上报地址。例如：
+| 参数名               | 类型     | 说明                                                                 |
+|----------------------|----------|----------------------------------------------------------------------|
+| `uptime`             | `long`   | 系统运行时间（秒）。                                                |
+| `load_1min`          | `double` | 系统 1 分钟负载。                                                   |
+| `load_5min`          | `double` | 系统 5 分钟负载。                                                   |
+| `load_15min`         | `double` | 系统 15 分钟负载。                                                  |
+| `net_tx`             | `ulong`  | 默认路由接口的发送流量（字节）。                                    |
+| `net_rx`             | `ulong`  | 默认路由接口的接收流量（字节）。                                    |
+| `disk_delay`         | `long`   | 磁盘延迟（微秒）。                                                  |
+| `cpu_delay`          | `long`   | CPU 延迟（微秒）。                                                  |
+| `disks_total_kb`     | `ulong`  | 磁盘总容量（KB）。                                                  |
+| `disks_avail_kb`     | `ulong`  | 磁盘可用容量（KB）。                                                |
+| `tcp_connections`    | `int`    | TCP 连接数。                                                        |
+| `udp_connections`    | `int`    | UDP 连接数。                                                        |
+| `cpu_num_cores`      | `int`    | CPU 核心数。                                                        |
+| `task_total`         | `int`    | 总任务数。                                                          |
+| `task_running`       | `int`    | 正在运行的任务数。                                                  |
+| `task_sleeping`      | `int`    | 睡眠中的任务数。                                                    |
+| `task_stopped`       | `int`    | 已停止的任务数。                                                    |
+| `task_zombie`        | `int`    | 僵尸任务数。                                                        |
+| `cpu_us`             | `double` | 用户空间占用 CPU 百分比（%）。                                      |
+| `cpu_sy`             | `double` | 内核空间占用 CPU 百分比（%）。                                      |
+| `cpu_ni`             | `double` | 用户进程空间内改变过优先级的进程占用 CPU 百分比（%）。              |
+| `cpu_id`             | `double` | 空闲 CPU 百分比（%）。                                              |
+| `cpu_wa`             | `double` | 等待 I/O 的 CPU 百分比（%）。                                       |
+| `cpu_hi`             | `double` | 硬件中断占用 CPU 百分比（%）。                                      |
+| `cpu_st`             | `double` | 虚拟机偷取的 CPU 百分比（%）。                                      |
+| `mem_total`          | `double` | 总内存大小（MiB）。                                                 |
+| `mem_free`           | `double` | 空闲内存大小（MiB）。                                               |
+| `mem_used`           | `double` | 已用内存大小（MiB）。                                               |
+| `mem_buff_cache`     | `double` | 缓存和缓冲区内存大小（MiB）。                                       |
 
-```
-uptime=1485256&load_1min=0.02&load_5min=0.03&load_15min=0.00&total_tasks=512&running_tasks=1&sleeping_tasks=0&stopped_tasks=512&zombie_tasks=0&cpu_user=2.87&cpu_system=0.23&cpu_nice=0.00&cpu_idle=96.89&cpu_iowait=0.01&cpu_irq=0.00&cpu_softirq=0.01&cpu_steal=0.00&mem_total=2027040&mem_free=87460&mem_used=1939580&net_tx=127804&net_rx=464394&disk_delay=2872&tcp_connections=11&cpu_delay=123456
+#### 示例 POST 请求
+
+```plaintext
+uptime=12345&
+load_1min=0.01&
+load_5min=0.05&
+load_15min=0.10&
+net_tx=1024&
+net_rx=2048&
+disk_delay=100&
+cpu_delay=200&
+disks_total_kb=1048576&
+disks_avail_kb=524288&
+tcp_connections=2&
+udp_connections=1&
+cpu_num_cores=4&
+task_total=97&
+task_running=1&
+task_sleeping=96&
+task_stopped=0&
+task_zombie=0&
+cpu_us=0.0&
+cpu_sy=0.0&
+cpu_ni=0.0&
+cpu_id=100.0&
+cpu_wa=0.0&
+cpu_hi=0.0&
+cpu_st=0.0&
+mem_total=1979.5&
+mem_free=148.1&
+mem_used=844.1&
+mem_buff_cache=1158.9
 ```
 
 ### 3. 服务配置
