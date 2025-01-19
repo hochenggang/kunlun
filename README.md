@@ -97,6 +97,7 @@ Kunlun 采集的指标数据包括以下字段：
 
 | 参数名               | 类型     | 说明                                                                 |
 |----------------------|----------|----------------------------------------------------------------------|
+| `machine_id`             | `char`   | Linux 服务器的 machine-id                                                |
 | `uptime`             | `long`   | 系统运行时间（秒）。                                                |
 | `load_1min`          | `double` | 系统 1 分钟负载。                                                   |
 | `load_5min`          | `double` | 系统 5 分钟负载。                                                   |
@@ -130,6 +131,7 @@ Kunlun 采集的指标数据包括以下字段：
 #### 示例 POST 请求
 
 ```plaintext
+machine_id=aabbccddd&
 uptime=12345&
 load_1min=0.01&
 load_5min=0.05&
