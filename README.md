@@ -113,13 +113,13 @@ Kunlun 采集的指标数据包括以下字段：
 | `cpu_num_cores`      | `int`    | CPU 核心数。                                                        |
 | `task_total`         | `int`    | 总任务数。                                                          |
 | `task_running`       | `int`    | 正在运行的任务数。                                                  |
-| `cpu_us`             | `double` | 用户空间占用 CPU 时间累计值（%）。                                      |
-| `cpu_sy`             | `double` | 内核空间占用 CPU 时间累计值（%）。                                      |
-| `cpu_ni`             | `double` | 用户进程空间内改变过优先级的进程占用 CPU 时间累计值（%）。              |
-| `cpu_id`             | `double` | 空闲 CPU 时间累计值（%）。                                              |
-| `cpu_wa`             | `double` | 等待 I/O 的 CPU 时间累计值（%）。                                       |
-| `cpu_hi`             | `double` | 硬件中断占用 CPU 时间累计值（%）。                                      |
-| `cpu_st`             | `double` | 虚拟机偷取的 CPU 时间累计值（%）。                                      |
+| `cpu_us`             | `double` | 用户空间占用 CPU 时间累计值。                                      |
+| `cpu_sy`             | `double` | 内核空间占用 CPU 时间累计值。                                      |
+| `cpu_ni`             | `double` | 用户进程空间内改变过优先级的进程占用 CPU 时间累计值。              |
+| `cpu_id`             | `double` | 空闲 CPU 时间累计值。                                              |
+| `cpu_wa`             | `double` | 等待 I/O 的 CPU 时间累计值。                                       |
+| `cpu_hi`             | `double` | 硬件中断占用 CPU 时间累计值。                                      |
+| `cpu_st`             | `double` | 虚拟机偷取的 CPU 时间累计值。                                      |
 | `mem_total`          | `double` | 总内存大小（MiB）。                                                 |
 | `mem_free`           | `double` | 空闲内存大小（MiB）。                                               |
 | `mem_used`           | `double` | 已用内存大小（MiB）。                                               |
