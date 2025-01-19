@@ -113,9 +113,6 @@ Kunlun 采集的指标数据包括以下字段：
 | `cpu_num_cores`      | `int`    | CPU 核心数。                                                        |
 | `task_total`         | `int`    | 总任务数。                                                          |
 | `task_running`       | `int`    | 正在运行的任务数。                                                  |
-| `task_sleeping`      | `int`    | 睡眠中的任务数。                                                    |
-| `task_stopped`       | `int`    | 已停止的任务数。                                                    |
-| `task_zombie`        | `int`    | 僵尸任务数。                                                        |
 | `cpu_us`             | `double` | 用户空间占用 CPU 百分比（%）。                                      |
 | `cpu_sy`             | `double` | 内核空间占用 CPU 百分比（%）。                                      |
 | `cpu_ni`             | `double` | 用户进程空间内改变过优先级的进程占用 CPU 百分比（%）。              |
@@ -147,9 +144,6 @@ udp_connections=1&
 cpu_num_cores=4&
 task_total=97&
 task_running=1&
-task_sleeping=96&
-task_stopped=0&
-task_zombie=0&
 cpu_us=0.0&
 cpu_sy=0.0&
 cpu_ni=0.0&
