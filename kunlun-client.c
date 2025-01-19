@@ -27,6 +27,7 @@ typedef struct {
     int tcp_connections;           // TCP 连接数
     int udp_connections;           // UDP 连接数
     int cpu_num_cores;             // CPU 核心数
+    char machine_id[33];           // 固定长度的字符数组，存储机器 ID
 } SystemMetrics;
 
 // 定义结构体，存储任务、CPU、内存信息
@@ -53,6 +54,29 @@ typedef struct {
     double mem_used;               // 已用内存大小
     double mem_buff_cache;         // 缓存和缓冲区内存大小
 } TopResult;
+
+
+
+// 获取 Linux 服务器的 machine-id，通常在操作系统存续的生命周期内不会变化
+int get_machine_id(char *buffer, size_t buffer_size) {
+    char *paths[] = {"/etc/machine-id", "/var/lib/dbus/machine-id", NULL};
+    for (int i = 0; paths[i] != NULL; i++) {
+        FILE *fp = fopen(paths[i], "r");
+        if (fp) {
+            if (fgets(buffer, buffer_size, fp)) {
+                fclose(fp);
+
+                // 去掉换行符（如果有）
+                char *newline = strchr(buffer, '\n');
+                if (newline) *newline = '\0';
+                return 0; // 成功读取
+            }
+            fclose(fp);
+        }
+    }
+    return -1; // 读取失败
+}
+
 
 // 获取系统运行时间
 long get_uptime() {
@@ -339,12 +363,11 @@ int parse_top_result(TopResult *result) {
     return 0;
 }
 
+
 // 将结构体转换为键值对字符串
 char *metrics_to_kv(const SystemMetrics *metrics, const TopResult *top_result) {
     char *kv = malloc(4096); // 分配足够大的缓冲区
-    if (!kv) {
-        return NULL;
-    }
+    if (!kv) return NULL;
 
     snprintf(kv, 4096,
              "uptime=%ld&"
@@ -360,6 +383,7 @@ char *metrics_to_kv(const SystemMetrics *metrics, const TopResult *top_result) {
              "tcp_connections=%d&"
              "udp_connections=%d&"
              "cpu_num_cores=%d&"
+             "machine_id=%s&"
              "task_total=%d&"
              "task_running=%d&"
              "task_sleeping=%d&"
@@ -389,6 +413,7 @@ char *metrics_to_kv(const SystemMetrics *metrics, const TopResult *top_result) {
              metrics->tcp_connections,
              metrics->udp_connections,
              metrics->cpu_num_cores,
+             metrics->machine_id,
              top_result->task_total,
              top_result->task_running,
              top_result->task_sleeping,
@@ -409,6 +434,7 @@ char *metrics_to_kv(const SystemMetrics *metrics, const TopResult *top_result) {
     return kv;
 }
 
+
 // 使用外部 curl 命令发送 POST 请求
 int send_post_request(const char *url, const char *data) {
     char command[4096];
@@ -428,6 +454,9 @@ void collect_metrics(SystemMetrics *metrics, TopResult *top_result) {
     metrics->udp_connections = get_udp_connections();
     metrics->cpu_num_cores = sysconf(_SC_NPROCESSORS_ONLN);
     parse_top_result(top_result);
+    if (get_machine_id(metrics->machine_id, sizeof(metrics->machine_id)) != 0) {
+        strncpy(metrics->machine_id, "unknown", sizeof(metrics->machine_id)); // 读取失败时设置为 "unknown"
+    }
 }
 
 int main(int argc, char *argv[]) {
