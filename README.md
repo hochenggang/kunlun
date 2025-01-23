@@ -81,7 +81,7 @@ systemctl status kunlun
 
 ### 1. 监测间隔
 
-监测间隔是指 Kunlun 采集系统指标并上报的时间间隔（单位：秒）。默认值为 10 秒。
+监测间隔是指 Kunlun 采集系统指标并上报的时间间隔（单位：秒），默认值为 10 秒。
 
 
 ### 2. 上报地址
@@ -93,68 +93,54 @@ systemctl status kunlun
 Kunlun 采集的指标数据包括以下字段：
 
 
-程序会将采集到的数据格式化为键值对，并通过 HTTP POST 请求发送。以下是参数的详细说明：
 
-| 参数名               | 类型     | 说明                                                                 |
-|----------------------|----------|----------------------------------------------------------------------|
-| `machine_id`             | `char`   | Linux 服务器的 machine-id                                                |
-| `uptime`             | `long`   | 系统运行时间（秒）。                                                |
-| `load_1min`          | `double` | 系统 1 分钟负载。                                                   |
-| `load_5min`          | `double` | 系统 5 分钟负载。                                                   |
-| `load_15min`         | `double` | 系统 15 分钟负载。                                                  |
-| `net_tx`             | `ulong`  | 默认路由接口的发送流量（字节）。                                    |
-| `net_rx`             | `ulong`  | 默认路由接口的接收流量（字节）。                                    |
-| `disk_delay`         | `long`   | 磁盘延迟（微秒）。                                                  |
-| `cpu_delay`          | `long`   | CPU 延迟（微秒）。                                                  |
-| `disks_total_kb`     | `ulong`  | 磁盘总容量（KB）。                                                  |
-| `disks_avail_kb`     | `ulong`  | 磁盘可用容量（KB）。                                                |
-| `tcp_connections`    | `int`    | TCP 连接数。                                                        |
-| `udp_connections`    | `int`    | UDP 连接数。                                                        |
-| `cpu_num_cores`      | `int`    | CPU 核心数。                                                        |
-| `task_total`         | `int`    | 总任务数。                                                          |
-| `task_running`       | `int`    | 正在运行的任务数。                                                  |
-| `cpu_us`             | `double` | 用户空间占用 CPU 时间累计值。                                      |
-| `cpu_sy`             | `double` | 内核空间占用 CPU 时间累计值。                                      |
-| `cpu_ni`             | `double` | 用户进程空间内改变过优先级的进程占用 CPU 时间累计值。              |
-| `cpu_id`             | `double` | 空闲 CPU 时间累计值。                                              |
-| `cpu_wa`             | `double` | 等待 I/O 的 CPU 时间累计值。                                       |
-| `cpu_hi`             | `double` | 硬件中断占用 CPU 时间累计值。                                      |
-| `cpu_st`             | `double` | 虚拟机偷取的 CPU 时间累计值。                                      |
-| `mem_total`          | `double` | 总内存大小（MiB）。                                                 |
-| `mem_free`           | `double` | 空闲内存大小（MiB）。                                               |
-| `mem_used`           | `double` | 已用内存大小（MiB）。                                               |
-| `mem_buff_cache`     | `double` | 缓存和缓冲区内存大小（MiB）。                                       |
+| 参数名                      | 类型           | 说明                                                                                                                                                                                                                                              |
+|---------------------------|----------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `uptime_s`                  | `long`         | 系统运行时间（秒），从 `/proc/uptime` 读取并截断为 `long` 类型。                                                                                                                                                                                          |
+| `load_1min`                 | `double`       | 1 分钟平均负载，从 `/proc/loadavg` 读取。                                                                                                                                                                                                          |
+| `load_5min`                 | `double`       | 5 分钟平均负载，从 `/proc/loadavg` 读取。                                                                                                                                                                                                          |
+| `load_15min`                | `double`       | 15 分钟平均负载，从 `/proc/loadavg` 读取。                                                                                                                                                                                                         |
+| `net_tx_bytes`              | `unsigned long`| 默认路由接口的发送流量（字节），从 `/proc/net/dev` 读取。                                                                                                                                                                                          |
+| `net_rx_bytes`              | `unsigned long`| 默认路由接口的接收流量（字节），从 `/proc/net/dev` 读取。                                                                                                                                                                                          |
+| `disk_delay_us`             | `long`         | 磁盘延迟（微秒），通过模拟写入 `/dev/null` 测量。                                                                                                                                                                                                   |
+| `cpu_delay_us`              | `long`         | CPU 延迟（微秒），通过计算一定迭代次数的圆周率来测量。                                                                                                                                                                                                  |
+| `disks_total_kb`            | `unsigned long long` | 磁盘总容量（KB），从 `statvfs` 获取。                                                                                                                                                                                                       |
+| `disks_avail_kb`            | `unsigned long long` | 磁盘可用容量（KB），从 `statvfs` 获取。                                                                                                                                                                                                       |
+| `tcp_connections`           | `int`          | TCP 连接数，从 `/proc/net/tcp` 读取。                                                                                                                                                                                                           |
+| `udp_connections`           | `int`          | UDP 连接数，从 `/proc/net/udp` 读取。                                                                                                                                                                                                           |
+| `cpu_num_cores`             | `int`          | CPU 核心数，通过 `sysconf(_SC_NPROCESSORS_ONLN)` 获取。                                                                                                                                                                                          |
+| `machine_id`                | `char[33]`     | Linux 服务器的 machine-id，从 `/etc/machine-id` 或 `/var/lib/dbus/machine-id` 读取。                                                                                                                                                                 |
+| `hostname`                  | `char[256]`    | 主机名，通过 `gethostname()` 获取。                                                                                                                                                                                                              |
+| `total_tasks`               | `int`          | 系统中总的任务数，从 `/proc/loadavg` 读取。                                                                                                                                                                                                     |
+| `running_tasks`             | `int`          | 正在运行的任务数，从 `/proc/loadavg` 读取。                                                                                                                                                                                                      |
+| `cpu_user`                  | `double`       | 用户空间占用 CPU 的时间（单位通常是 jiffies），从 `/proc/stat` 读取。                                                                                                                                                                                  |
+| `cpu_system`                | `double`       | 内核空间占用 CPU 的时间，从 `/proc/stat` 读取。                                                                                                                                                                                                  |
+| `cpu_nice`                  | `double`       | 用户进程空间内改变过优先级的进程占用 CPU 的时间，从 `/proc/stat` 读取。                                                                                                                                                                             |
+| `cpu_idle`                  | `double`       | 空闲 CPU 的时间，从 `/proc/stat` 读取。                                                                                                                                                                                                        |
+| `cpu_iowait`                | `double`       | 等待 I/O 的 CPU 时间，从 `/proc/stat` 读取。                                                                                                                                                                                                     |
+| `cpu_irq`                   | `double`       | 硬件中断占用 CPU 的时间，从 `/proc/stat` 读取。                                                                                                                                                                                                  |
+| `cpu_steal`                 | `double`       | 虚拟机偷取的 CPU 时间，从 `/proc/stat` 读取。                                                                                                                                                                                                     |
+| `mem_total_mib`             | `double`       | 总内存大小 (MiB)，从 `/proc/meminfo` 读取并转换为 MiB。                                                                                                                                                                                          |
+| `mem_free_mib`              | `double`       | 空闲内存大小 (MiB)，从 `/proc/meminfo` 读取并转换为 MiB。                                                                                                                                                                                          |
+| `mem_used_mib`              | `double`       | 已用内存大小 (MiB)，计算得出（总内存 - 空闲内存）。                                                                                                                                                                                                |
+| `mem_buff_cache_mib`        | `double`       | 缓存和缓冲区内存大小 (MiB)，从 `/proc/meminfo` 读取并转换为 MiB。                                                                                                                                                                                     |
+| `timestamp`                 | `long`         | 数据采集的时间戳（Unix 时间戳），通过 `time(NULL)` 获取。                                                                                                                                                                                           |
+| `root_diskstats_reads_completed` | `unsigned long long` | 根目录所在磁盘成功完成的读操作总数，从 `/proc/diskstats` 读取。                                                                                                                                                                            |
+| `root_diskstats_read_sectors`   | `unsigned long long` | 根目录所在磁盘读取的扇区总数，从 `/proc/diskstats` 读取。                                                                                                                                                                                |
+| `root_diskstats_reading_ms`     | `unsigned long long` | 根目录所在磁盘花费在读操作上的总毫秒数，从 `/proc/diskstats` 读取。                                                                                                                                                                         |
+| `root_diskstats_writes_completed`| `unsigned long long` | 根目录所在磁盘成功完成的写操作总数，从 `/proc/diskstats` 读取。                                                                                                                                                                            |
+| `root_diskstats_write_sectors`  | `unsigned long long` | 根目录所在磁盘写入的扇区总数，从 `/proc/diskstats` 读取。                                                                                                                                                                                |
+| `root_diskstats_writing_ms`    | `unsigned long long` | 根目录所在磁盘花费在写操作上的总毫秒数，从 `/proc/diskstats` 读取。                                                                                                                                                                         |
+| `root_diskstats_ios_in_progress`| `unsigned long long` | 根目录所在磁盘当前正在进行的 I/O 操作数，从 `/proc/diskstats` 读取。                                                                                                                                                                         |
+| `root_diskstats_iotime_ms`      | `unsigned long long` | 根目录所在磁盘所有 I/O 操作花费的总毫秒数，从 `/proc/diskstats` 读取。                                                                                                                                                                       |
+| `root_diskstats_weighted_io_time`| `unsigned long long` | 根目录所在磁盘的加权 I/O 时间（毫秒），从 `/proc/diskstats` 读取。                                                                                                                                                                            |
+
 
 #### 示例 POST 请求
 
 ```plaintext
-machine_id=aabbccddd&
-uptime=12345&
-load_1min=0.01&
-load_5min=0.05&
-load_15min=0.10&
-net_tx=1024&
-net_rx=2048&
-disk_delay=100&
-cpu_delay=200&
-disks_total_kb=1048576&
-disks_avail_kb=524288&
-tcp_connections=2&
-udp_connections=1&
-cpu_num_cores=4&
-task_total=97&
-task_running=1&
-cpu_us=11.0&
-cpu_sy=22.0&
-cpu_ni=0.0&
-cpu_id=100.0&
-cpu_wa=0.0&
-cpu_hi=0.0&
-cpu_st=0.0&
-mem_total=1979.5&
-mem_free=148.1&
-mem_used=844.1&
-mem_buff_cache=1158.9
+values=timestamp,uptime_s,load_1min,load_5min,load_15min,running_tasks,total_tasks,cpu_user,cpu_system,cpu_nice,cpu_idle,cpu_iowait,cpu_irq,cpu_softirq,cpu_steal,mem_total_mib,mem_free_mib,mem_used_mib,mem_buff_cache_mib,tcp_connections,udp_connections,default_interface_net_rx_bytes,default_interface_net_tx_bytes,cpu_num_cores,cpu_delay_us,disk_delay_us,root_disk_total_kb,root_disk_avail_kb,reads_completed,writes_completed,reading_ms,writing_ms,iotime_ms,ios_in_progress,weighted_io_time,machine_id,hostname
+
 ```
 
 ### 3. 服务配置
@@ -167,7 +153,7 @@ Description=Kunlun System Monitor
 After=network.target
 
 [Service]
-ExecStart=/home/your-user/bin/kunlun_amd64 -s 10 -u https://example.com
+ExecStart=/home/your-user/bin/kunlun_amd64 -u https://example.com
 Restart=always
 User=your-user
 Environment=HOME=/home/your-user
@@ -176,7 +162,7 @@ Environment=HOME=/home/your-user
 WantedBy=multi-user.target
 ```
 
-- **ExecStart**：Kunlun 的启动命令，包含监测间隔和上报地址。
+- **ExecStart**：Kunlun 的启动命令，包含上报地址。
 - **Restart**：服务崩溃后自动重启。
 - **User**：运行 Kunlun 的用户。
 - **Environment**：设置环境变量。
@@ -198,7 +184,7 @@ cd kunlun
 使用 `gcc` 编译 Kunlun：
 
 ```bash
-gcc -o kunlun_amd64 kunlun_client.c
+gcc -o kunlun_amd64 kunlun-client.c
 ```
 
 ---
