@@ -29,7 +29,7 @@ install_package() {
         $cmd apt update
         $cmd apt install -y "$package"
         ;;
-      centos|rhel|fedora)
+      centos|rhel|fedora|almalinux)
         $cmd yum install -y "$package"
         ;;
       arch)
@@ -62,7 +62,7 @@ install_kunlun() {
     return 1
   fi
 
-  # 校验上报地址 (未改进，保留原方法)
+  # 校验上报地址
   echo "校验上报地址..."
   RESPONSE=$(curl -s "$REPORT_URL")
   if [[ $RESPONSE != *"kunlun"* ]]; then
