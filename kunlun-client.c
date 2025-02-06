@@ -89,18 +89,20 @@ typedef struct
     char hostname[256];                    // 主机名
 } SystemInfo;
 
-
 // 获取根目录挂载分区的磁盘统计信息
-int get_root_diskstats(DiskStats *stats) {
+int get_root_diskstats(DiskStats *stats)
+{
     // 检查输入参数是否有效
-    if (!stats) return -1;
+    if (!stats)
+        return -1;
 
     // 初始化 stats 结构体，避免使用未初始化的值
     memset(stats, 0, sizeof(DiskStats));
 
     // 1. 获取根目录挂载的设备名
     FILE *mounts_file = setmntent("/proc/mounts", "r"); // 打开 /proc/mounts 文件以读取挂载信息
-    if (!mounts_file) {
+    if (!mounts_file)
+    {
         perror("setmntent"); // 打印错误信息
         return -1;
     }
@@ -109,30 +111,35 @@ int get_root_diskstats(DiskStats *stats) {
     struct mntent *mount_entry; // 存储挂载信息的结构体指针
 
     // 遍历 /proc/mounts 中的每一项挂载信息
-    while ((mount_entry = getmntent(mounts_file)) != NULL) {
+    while ((mount_entry = getmntent(mounts_file)) != NULL)
+    {
         // 查找根目录的挂载项
-        if (strcmp(mount_entry->mnt_dir, "/") == 0) {
+        if (strcmp(mount_entry->mnt_dir, "/") == 0)
+        {
             strncpy(root_device, mount_entry->mnt_fsname, sizeof(root_device)); // 复制设备名
-            root_device[sizeof(root_device) - 1] = '\0'; // 确保字符串以 null 结尾，防止缓冲区溢出
-            break; // 找到根目录，退出循环
+            root_device[sizeof(root_device) - 1] = '\0';                        // 确保字符串以 null 结尾，防止缓冲区溢出
+            break;                                                              // 找到根目录，退出循环
         }
     }
     endmntent(mounts_file); // 关闭 /proc/mounts 文件
 
     // 如果没有找到根目录的挂载信息
-    if (strlen(root_device) == 0) {
+    if (strlen(root_device) == 0)
+    {
         fprintf(stderr, "Could not find root device in /proc/mounts\n");
         return -1;
     }
 
     // 处理 /dev/ 前缀，/proc/diskstats 中不包含 /dev/
-    if (strncmp(root_device, "/dev/", 5) == 0) {
+    if (strncmp(root_device, "/dev/", 5) == 0)
+    {
         memmove(root_device, root_device + 5, strlen(root_device) - 4); // 移除 "/dev/" 前缀
     }
 
     // 2. 读取 /proc/diskstats
     FILE *diskstats_file = fopen("/proc/diskstats", "r"); // 打开 /proc/diskstats 文件
-    if (!diskstats_file) {
+    if (!diskstats_file)
+    {
         perror("/proc/diskstats"); // 打印错误信息
         return -1;
     }
@@ -140,28 +147,29 @@ int get_root_diskstats(DiskStats *stats) {
     char line[1024]; // 存储 /proc/diskstats 文件中每一行的缓冲区
 
     // 遍历 /proc/diskstats 中的每一行
-    while (fgets(line, sizeof(line), diskstats_file)) {
-        int major, minor;        // 主设备号和次设备号
-        char name[256];         // 设备名
+    while (fgets(line, sizeof(line), diskstats_file))
+    {
+        int major, minor; // 主设备号和次设备号
+        char name[256];   // 设备名
 
         // 3. 解析并匹配设备名，兼容不同内核版本（11/14个字段），并处理可能的解析错误
         int fields_read;
         fields_read = sscanf(line, "%d %d %255s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
-                   &major, &minor, name,
-                   &stats->reads_completed, &stats->read_merges, &stats->read_sectors, &stats->reading_ms,
-                   &stats->writes_completed, &stats->write_merges, &stats->write_sectors, &stats->writing_ms,
-                   &stats->ios_in_progress, &stats->iotime_ms, &stats->weighted_io_time);
-        if (fields_read >= 11 && strcmp(name, root_device) == 0) { // 至少需要前11个字段才能判断设备名
+                             &major, &minor, name,
+                             &stats->reads_completed, &stats->read_merges, &stats->read_sectors, &stats->reading_ms,
+                             &stats->writes_completed, &stats->write_merges, &stats->write_sectors, &stats->writing_ms,
+                             &stats->ios_in_progress, &stats->iotime_ms, &stats->weighted_io_time);
+        if (fields_read >= 11 && strcmp(name, root_device) == 0)
+        {                           // 至少需要前11个字段才能判断设备名
             fclose(diskstats_file); // 关闭文件
-            return 0; // 成功
+            return 0;               // 成功
         }
     }
 
-    fclose(diskstats_file); // 关闭文件
+    fclose(diskstats_file);                                                         // 关闭文件
     fprintf(stderr, "Could not find diskstats for root device: %s\n", root_device); // 打印错误信息
-    return -1; // 未找到匹配的行
+    return -1;                                                                      // 未找到匹配的行
 }
-
 
 // 优化后的磁盘耗时测量函数
 long long measure_disk_io_time(int num_ops)
@@ -421,104 +429,70 @@ void trim_leading_whitespace(char *str)
     memmove(str, start, strlen(start) + 1);
 }
 
-// 获取默认路由的网口名称
-char *get_default_interface()
-{
+
+
+// 使用默认路由来获取流量数据的方法在实践后发现存在不足，还是直接获取最大流量的接口更加稳健，无论是转发还是 warp 最终都要走真正的外网接口出去
+// 获取最大流量接口的上传和下载流量数据（单位为字节）
+int get_max_traffic_interface(unsigned long *rx_bytes, unsigned long *tx_bytes) {
     FILE *fp;
     char line[256];
-    char *iface = NULL;
+    char max_iface[32] = {0}; // 存储流量最大的接口名称
+    unsigned long max_total = 0; // 存储最大流量值
 
-    // 打开 /proc/net/route 文件
-    fp = fopen("/proc/net/route", "r");
-    if (!fp)
-    {
-        perror("Failed to open /proc/net/route");
-        return NULL;
-    }
-
-    // 跳过表头
-    fgets(line, sizeof(line), fp);
-
-    // 遍历每一行，找到默认路由
-    while (fgets(line, sizeof(line), fp))
-    {
-        char name[32];
-        unsigned long dest, flags;
-
-        // 解析网口名称、目标地址和路由标志
-        if (sscanf(line, "%31s %lx %*x %lx", name, &dest, &flags) == 3)
-        {
-            // 检查是否为默认路由（目标地址为 0.0.0.0，且标志包含 RTF_UP 和 RTF_GATEWAY）
-            if (dest == 0 && (flags & 0x3) == 0x3)
-            { // 0x3 = RTF_UP | RTF_GATEWAY
-                iface = strdup(name);
-                break;
-            }
-        }
-    }
-
-    fclose(fp);
-
-    return iface;
-}
-
-// 获取默认路由网口的上传和下载流量数据（单位为字节）
-int get_default_interface_traffic(unsigned long *rx_bytes, unsigned long *tx_bytes)
-{
-    FILE *fp;
-    char line[256];
-    char *iface = get_default_interface();
-
-    // 初始化返回值为 0
+    // 初始化返回值
     *rx_bytes = 0;
     *tx_bytes = 0;
 
-    if (!iface)
-    {
-        fprintf(stderr, "Failed to find default interface\n");
-        return -1;
-    }
-
     // 打开 /proc/net/dev 文件
-    fp = fopen("/proc/net/dev", "r");
-    if (!fp)
-    {
+    if ((fp = fopen("/proc/net/dev", "r")) == NULL) {
         perror("Failed to open /proc/net/dev");
-        free(iface);
         return -1;
     }
 
     // 跳过前两行（表头）
-    fgets(line, sizeof(line), fp);
-    fgets(line, sizeof(line), fp);
+    for (int i = 0; i < 2; i++) {
+        if (!fgets(line, sizeof(line), fp)) {
+            fclose(fp);
+            fprintf(stderr, "Unexpected end of file\n");
+            return -1;
+        }
+    }
 
-    // 遍历每一行，找到默认网口的流量数据
-    while (fgets(line, sizeof(line), fp))
-    {
+    // 遍历每一行，找到流量最大的接口
+    while (fgets(line, sizeof(line), fp)) {
         char name[32];
         unsigned long rx, tx;
 
-        // 解析网口名称和流量数据
-        if (sscanf(line, "%31[^:]: %lu %*lu %*lu %*lu %*lu %*lu %*lu %*lu %lu",
-                   name, &rx, &tx) == 3)
-        {
-            // 去除接口名称的前导空格
-            trim_leading_whitespace(name);
+        // 解析接口名称和流量数据
+        if (sscanf(line, " %31[^:]: %lu %*lu %*lu %*lu %*lu %*lu %*lu %*lu %lu",
+                   name, &rx, &tx) == 3) {
+            // 计算当前接口的总流量
+            unsigned long total = rx + tx;
 
-            // 匹配默认网口
-            if (strcmp(name, iface) == 0)
-            {
+            // 如果当前接口的总流量大于已知的最大流量，则更新最大值
+            if (total > max_total) {
+                max_total = total;
                 *rx_bytes = rx;
                 *tx_bytes = tx;
-                break;
+                strncpy(max_iface, name, sizeof(max_iface) - 1);
             }
         }
     }
 
     fclose(fp);
-    free(iface);
+
+    // 如果没有找到任何接口，返回错误
+    if (max_total == 0) {
+        fprintf(stderr, "No interface found with traffic\n");
+        return -1;
+    }
+
+    // printf("Max traffic interface: %s (rx: %lu, tx: %lu)\n", max_iface, *rx_bytes, *tx_bytes);
     return 0;
 }
+
+
+
 
 // 获取磁盘空间信息，单位为 KB
 int get_disk_space_kb(const char *path, unsigned long long *total_size_kb, unsigned long long *available_size_kb)
@@ -584,8 +558,6 @@ long calculate_pi(int iterations)
     return time_diff_us(&start, &end);
 }
 
-
-
 // 获取磁盘延迟（微秒）
 long get_disk_delay(int iterations)
 {
@@ -643,8 +615,8 @@ long get_disk_delay(int iterations)
 int send_post_request(const char *url, const char *data)
 {
     char command[4096];
-    // 使用更安全的 snprintf，并检查返回值
-    int ret = snprintf(command, sizeof(command), "curl -X POST -d '%s' '%s'", data, url);
+    // 使用curl静默跟随POST数据到用户指定的上报地址并静默标准输出
+    int ret = snprintf(command, sizeof(command), "curl -sL  -X POST -d '%s' '%s' > /dev/null", data, url);
     if (ret < 0 || ret >= sizeof(command))
     {
         fprintf(stderr, "Error: Command too long or encoding error\n");
@@ -684,7 +656,8 @@ void collect_metrics(Uptime *uptime, LoadAvg *loadavg, CpuInfo *cpuinfo, MemInfo
     {
         fprintf(stderr, "Failed to get hostname\n");
     }
-    if (get_root_diskstats(diskstats) != 0){
+    if (get_root_diskstats(diskstats) != 0)
+    {
         fprintf(stderr, "Failed to get diskstats\n");
     }
 
@@ -695,18 +668,18 @@ void collect_metrics(Uptime *uptime, LoadAvg *loadavg, CpuInfo *cpuinfo, MemInfo
     {
         fprintf(stderr, "Failed to get disk space\n");
     }
-    if (get_default_interface_traffic(&netinfo->default_interface_net_rx_bytes, &netinfo->default_interface_net_tx_bytes) != 0)
+    if (get_max_traffic_interface(&netinfo->default_interface_net_rx_bytes, &netinfo->default_interface_net_tx_bytes) != 0)
     {
         fprintf(stderr, "Failed to get net traffic\n");
     }
 }
 
-
-
 // 将指标转换为 values=v1,v2,v3,... 格式的字符串
-char *metrics_to_kv(int timestamp, Uptime *uptime, LoadAvg *loadavg, CpuInfo *cpuinfo, MemInfo *meminfo, NetInfo *netinfo, SystemInfo *sysinfo, DiskStats *diskstats) {
+char *metrics_to_kv(int timestamp, Uptime *uptime, LoadAvg *loadavg, CpuInfo *cpuinfo, MemInfo *meminfo, NetInfo *netinfo, SystemInfo *sysinfo, DiskStats *diskstats)
+{
     char *kv_string = malloc(8192); // Increased buffer size for safety
-    if (!kv_string) {
+    if (!kv_string)
+    {
         perror("malloc");
         return NULL;
     }
@@ -718,7 +691,7 @@ char *metrics_to_kv(int timestamp, Uptime *uptime, LoadAvg *loadavg, CpuInfo *cp
     // Use snprintf to build the comma-separated values
     values_len += snprintf(values_buffer + values_len, sizeof(values_buffer) - values_len,
                            "%ld,%ld,%.2lf,%.2lf,%.2lf,%d,%d,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.2lf,%.2lf,%.2lf,%.2lf,%d,%d,%lu,%lu,%d,%ld,%lld,%llu,%llu,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%s,%s",
-                           timestamp,(long)uptime->uptime_s,
+                           timestamp, (long)uptime->uptime_s,
                            loadavg->load_1min, loadavg->load_5min, loadavg->load_15min,
                            loadavg->running_tasks, loadavg->total_tasks,
                            cpuinfo->cpu_user, cpuinfo->cpu_system, cpuinfo->cpu_nice,
@@ -731,10 +704,11 @@ char *metrics_to_kv(int timestamp, Uptime *uptime, LoadAvg *loadavg, CpuInfo *cp
                            sysinfo->cpu_num_cores, sysinfo->cpu_delay_us, sysinfo->disk_delay_us,
                            sysinfo->root_disk_total_kb, sysinfo->root_disk_avail_kb,
                            diskstats->reads_completed, diskstats->writes_completed, diskstats->reading_ms, diskstats->writing_ms,
-                           diskstats->iotime_ms, diskstats->ios_in_progress,diskstats->weighted_io_time,
+                           diskstats->iotime_ms, diskstats->ios_in_progress, diskstats->weighted_io_time,
                            sysinfo->machine_id, sysinfo->hostname);
 
-    if (values_len < 0 || values_len >= sizeof(values_buffer)) {
+    if (values_len < 0 || values_len >= sizeof(values_buffer))
+    {
         fprintf(stderr, "Error: Values string too long\n");
         free(kv_string);
         return NULL;
@@ -743,7 +717,8 @@ char *metrics_to_kv(int timestamp, Uptime *uptime, LoadAvg *loadavg, CpuInfo *cp
     // Now build the final "values=..." string
     int kv_len = snprintf(kv_string, 8192, "values=%s", values_buffer);
 
-    if (kv_len < 0 || kv_len >= 8192) {
+    if (kv_len < 0 || kv_len >= 8192)
+    {
         fprintf(stderr, "Error: Key-value string too long\n");
         free(kv_string);
         return NULL;
@@ -751,8 +726,6 @@ char *metrics_to_kv(int timestamp, Uptime *uptime, LoadAvg *loadavg, CpuInfo *cp
 
     return kv_string;
 }
-
-
 
 int main(int argc, char *argv[])
 {
