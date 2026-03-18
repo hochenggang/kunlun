@@ -1,94 +1,141 @@
 #!/bin/bash
 
-# 常量定义
+set -e
+
 KUNLUN_BIN="$HOME/bin/kunlun"
 KUNLUN_SERVICE="kunlun.service"
 KUNLUN_SERVICE_PATH="/etc/systemd/system/$KUNLUN_SERVICE"
-KUNLUN_URL="https://github.com/hochenggang/kunlun/releases/download/v0.1.0/kunlun_amd64"
+RELEASES_BASE_URL="https://github.com/hochenggang/kunlun/releases/download"
 
-# 函数：检查 root 权限
+print_info() {
+    echo -e "\033[36m[INFO]\033[0m $1"
+}
+
+print_success() {
+    echo -e "\033[32m[SUCCESS]\033[0m $1"
+}
+
+print_error() {
+    echo -e "\033[31m[ERROR]\033[0m $1"
+}
+
 is_root() {
-  [[ "$EUID" -eq 0 ]]
+    [[ "$EUID" -eq 0 ]]
 }
 
-# 函数：安装软件包（根据发行版）
-install_package() {
-  local package="$1"
-  local cmd
+get_sudo() {
+    if is_root; then
+        echo ""
+    else
+        echo "sudo"
+    fi
+}
 
-  if is_root; then
-    cmd=""
-  else
-    cmd="sudo"
-  fi
-
-  if [[ -f /etc/os-release ]]; then
-    . /etc/os-release
-    case "$ID" in
-      ubuntu|debian)
-        $cmd apt update
-        $cmd apt install -y "$package"
-        ;;
-      centos|rhel|fedora|almalinux)
-        $cmd yum install -y "$package"
-        ;;
-      arch)
-        $cmd pacman -S --noconfirm "$package"
-        ;;
-      *)
-        echo "不支持的发行版: $ID"
-        return 1
-        ;;
+detect_arch() {
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64)
+            echo "amd64"
+            ;;
+        aarch64|arm64)
+            echo "arm64"
+            ;;
+        *)
+            print_error "不支持的架构: $arch"
+            exit 1
+            ;;
     esac
-  else
-    echo "无法识别发行版！"
-    return 1
-  fi
 }
 
-# 函数：安装 Kunlun
+get_latest_version() {
+    local version
+    version=$(curl -sI "https://github.com/hochenggang/kunlun/releases/latest" | grep -i "location:" | sed 's/.*tag\///' | tr -d '\r\n')
+    if [[ -z "$version" ]]; then
+        version="v0.2.0"
+    fi
+    echo "$version"
+}
+
+install_package() {
+    local package="$1"
+    local sudo_cmd
+    sudo_cmd=$(get_sudo)
+
+    if [[ -f /etc/os-release ]]; then
+        . /etc/os-release
+        case "$ID" in
+            ubuntu|debian)
+                $sudo_cmd apt update
+                $sudo_cmd apt install -y "$package"
+                ;;
+            centos|rhel|fedora|almalinux|rocky)
+                $sudo_cmd yum install -y "$package"
+                ;;
+            arch|manjaro)
+                $sudo_cmd pacman -S --noconfirm "$package"
+                ;;
+            opensuse*)
+                $sudo_cmd zypper install -y "$package"
+                ;;
+            *)
+                print_error "不支持的发行版: $ID"
+                return 1
+                ;;
+        esac
+    else
+        print_error "无法识别发行版"
+        return 1
+    fi
+}
+
 install_kunlun() {
-  # 安装 curl
-  echo "安装 curl..."
-  if ! install_package curl; then
-    return 1
-  fi
+    print_info "开始安装 Kunlun..."
 
-  # 获取用户输入
+    if ! command -v curl &> /dev/null; then
+        print_info "正在安装 curl..."
+        install_package curl || exit 1
+    fi
 
-  read -p "请输入上报地址: " REPORT_URL
-  if [ -z "$REPORT_URL" ]; then
-    echo "上报地址不能为空！"
-    return 1
-  fi
+    local arch
+    arch=$(detect_arch)
+    print_info "检测到架构: $arch"
 
-  # 校验上报地址
-  echo "校验上报地址..."
-  RESPONSE=$(curl -s "$REPORT_URL")
-  if [[ $RESPONSE != *"kunlun"* ]]; then
-    echo "上报地址校验失败：返回内容不包含 'kunlun'"
-    return 1
-  fi
-  echo "上报地址校验通过！"
+    local version
+    version=$(get_latest_version)
+    print_info "最新版本: $version"
 
-  # 下载 Kunlun 二进制文件
-  echo "下载 Kunlun 二进制文件..."
-  mkdir -p "$HOME/bin"
-  curl -L "$KUNLUN_URL" -o "$KUNLUN_BIN"
-    if [[ ! -f "$KUNLUN_BIN" ]]; then
-      echo "下载 Kunlun 二进制文件失败！"
-      return 1
-  fi
-  chmod +x "$KUNLUN_BIN"
+    local download_url="$RELEASES_BASE_URL/$version/kunlun-client-linux-$arch"
 
-  # 创建 systemd 服务文件 (简化)
-  echo "配置 systemd 服务..."
-  if is_root; then
-    user=""
-  else
-    user="sudo"
-  fi
-  $user tee "$KUNLUN_SERVICE_PATH" > /dev/null <<EOF
+    read -p "请输入上报地址: " REPORT_URL
+    if [[ -z "$REPORT_URL" ]]; then
+        print_error "上报地址不能为空"
+        exit 1
+    fi
+
+    print_info "验证上报地址..."
+    local response
+    response=$(curl -s "$REPORT_URL" 2>/dev/null || true)
+    if [[ "$response" != *"kunlun"* ]]; then
+        print_error "上报地址验证失败：GET 请求返回内容不包含 'kunlun'"
+        exit 1
+    fi
+    print_success "上报地址验证通过"
+
+    print_info "正在下载 Kunlun ($arch)..."
+    mkdir -p "$HOME/bin"
+    if ! curl -fL "$download_url" -o "$KUNLUN_BIN" 2>/dev/null; then
+        print_error "下载失败: $download_url"
+        exit 1
+    fi
+    chmod +x "$KUNLUN_BIN"
+    print_success "下载完成"
+
+    local sudo_cmd
+    sudo_cmd=$(get_sudo)
+
+    print_info "配置 systemd 服务..."
+    $sudo_cmd tee "$KUNLUN_SERVICE_PATH" > /dev/null <<EOF
 [Unit]
 Description=Kunlun System Monitor
 After=network.target
@@ -96,6 +143,7 @@ After=network.target
 [Service]
 ExecStart="$KUNLUN_BIN" -u "$REPORT_URL"
 Restart=always
+RestartSec=5
 User=$USER
 Environment=HOME=$HOME
 
@@ -103,49 +151,67 @@ Environment=HOME=$HOME
 WantedBy=multi-user.target
 EOF
 
-  # 启动并启用服务 (合并命令)
-  echo "启动并启用 Kunlun 服务..."
-  $user systemctl daemon-reload
-  $user systemctl enable "$KUNLUN_SERVICE"
-  $user systemctl restart "$KUNLUN_SERVICE" # 使用 restart 确保配置生效
+    print_info "启动服务..."
+    $sudo_cmd systemctl daemon-reload
+    $sudo_cmd systemctl enable "$KUNLUN_SERVICE"
+    $sudo_cmd systemctl restart "$KUNLUN_SERVICE"
 
-  echo "Kunlun 已安装并启动！"
-  echo "使用以下命令查看状态："
-  echo "sudo systemctl status $KUNLUN_SERVICE"
+    print_success "Kunlun 安装完成！"
+    echo ""
+    echo "查看状态: systemctl status $KUNLUN_SERVICE"
+    echo "查看日志: journalctl -u $KUNLUN_SERVICE -f"
 }
 
-# 函数：卸载 Kunlun
 uninstall_kunlun() {
-  echo "停止并禁用 Kunlun 服务..."
-  if is_root; then
-    user=""
-  else
-    user="sudo"
-  fi
-  $user systemctl stop "$KUNLUN_SERVICE"
-  $user systemctl disable "$KUNLUN_SERVICE"
+    print_info "正在卸载 Kunlun..."
 
-  echo "删除相关文件..."
-  $user rm -f "$KUNLUN_SERVICE_PATH" "$KUNLUN_BIN"
-  $user systemctl daemon-reload # 重载配置
+    local sudo_cmd
+    sudo_cmd=$(get_sudo)
 
-  echo "Kunlun 已卸载！"
+    if systemctl is-active "$KUNLUN_SERVICE" &>/dev/null; then
+        $sudo_cmd systemctl stop "$KUNLUN_SERVICE"
+    fi
+
+    if systemctl is-enabled "$KUNLUN_SERVICE" &>/dev/null; then
+        $sudo_cmd systemctl disable "$KUNLUN_SERVICE"
+    fi
+
+    $sudo_cmd rm -f "$KUNLUN_SERVICE_PATH"
+    rm -f "$KUNLUN_BIN"
+    $sudo_cmd systemctl daemon-reload
+
+    print_success "Kunlun 已卸载"
 }
 
-# 主函数
-main() {
-  
-    echo "请选择操作："
+show_menu() {
+    echo ""
+    echo "================================"
+    echo "       Kunlun 管理工具"
+    echo "================================"
     echo "1. 安装 Kunlun"
     echo "2. 卸载 Kunlun"
     echo "3. 退出"
-    read -p "请输入选项（1-3）: " CHOICE
+    echo "================================"
+}
 
-    case "$CHOICE" in
-      1) install_kunlun || exit 1 ;; # 错误处理
-      2) uninstall_kunlun ;;
-      3) exit 0 ;;
-      *) echo "无效选项！" ;;
+main() {
+    show_menu
+    read -p "请选择 (1-3): " choice
+
+    case "$choice" in
+        1)
+            install_kunlun || exit 1
+            ;;
+        2)
+            uninstall_kunlun
+            ;;
+        3)
+            exit 0
+            ;;
+        *)
+            print_error "无效选项"
+            exit 1
+            ;;
     esac
 }
 

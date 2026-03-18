@@ -1,3 +1,26 @@
+/**
+ * @file kunlun-client.c
+ * @brief 昆仑客户端 - Linux 系统监控数据采集器
+ *
+ * 本程序用于采集 Linux 系统的各项性能指标，并通过 HTTP POST 请求
+ * 将数据上报到指定的服务器端点。采集间隔为 10 秒。
+ *
+ * 采集的指标包括：
+ * - 系统运行时间和空闲时间
+ * - 系统负载（1/5/15分钟）
+ * - CPU 各状态时间（user/nice/system/idle/iowait/irq/softirq/steal）
+ * - 内存使用情况（total/free/used/buff_cache）
+ * - 网络连接数（TCP/UDP）
+ * - 默认网口流量（RX/TX 字节数）
+ * - CPU 核心数
+ * - 根分区磁盘空间（总量/可用量）
+ * - 根分区磁盘 I/O 统计
+ * - 机器 ID 和主机名
+ *
+ * @author imhcg
+ * @version 0.2.0
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,46 +37,53 @@
 #include <string.h>
 #include <errno.h>
 
-// 定义 uptime 结构体
+/**
+ * @brief 系统运行时间结构体
+ *
+ * 存储从 /proc/uptime 读取的系统运行时间信息
+ */
 typedef struct
 {
-    double uptime_s;
-    double idle_s;
+    double uptime_s;double idle_s;
 } Uptime;
 
-// 定义 LoadAvg 结构体
+/**
+ * @brief 系统负载结构体
+ *
+ * 存储从 /proc/loadavg 读取的系统负载和任务信息
+ */
 typedef struct
 {
-    double load_1min;
-    double load_5min;
-    double load_15min;
+    double load_1min;double load_5min;double load_15min;
     int running_tasks;
     int total_tasks;
 } LoadAvg;
 
-// 定义 CpuInfo 结构体
+/**
+ * @brief CPU 信息结构体
+ *
+ * 存储从 /proc/stat 读取的 CPU 各状态时间（单位：jiffies）
+ */
 typedef struct
 {
-    unsigned long long cpu_user;
-    unsigned long long cpu_system;
-    unsigned long long cpu_nice;
-    unsigned long long cpu_idle;
-    unsigned long long cpu_iowait;
-    unsigned long long cpu_irq;
-    unsigned long long cpu_softirq;
-    unsigned long long cpu_steal;
+    unsigned long long cpu_user;unsigned long long cpu_system;unsigned long long cpu_nice;unsigned long long cpu_idle;unsigned long long cpu_iowait;unsigned long long cpu_irq;unsigned long long cpu_softirq;unsigned long long cpu_steal;
 } CpuInfo;
 
-// 定义 MemInfo 结构体
+/**
+ * @brief 内存信息结构体
+ *
+ * 存储从 /proc/meminfo 读取的内存使用信息（单位：MiB）
+ */
 typedef struct
 {
-    double mem_total_mib;
-    double mem_free_mib;
-    double mem_used_mib;
-    double mem_buff_cache_mib;
+    double mem_total_mib;double mem_free_mib;double mem_used_mib;double mem_buff_cache_mib;
 } MemInfo;
 
-// 定义 NetInfo 结构体
+/**
+ * @brief 网络信息结构体
+ *
+ * 存储网络连接数和默认网口流量信息
+ */
 typedef struct
 {
     int tcp_connections;
@@ -62,177 +92,119 @@ typedef struct
     unsigned long default_interface_net_rx_bytes;
 } NetInfo;
 
-// 磁盘统计信息结构体
+/**
+ * @brief 磁盘统计信息结构体
+ *
+ * 存储从 /proc/diskstats 读取的磁盘 I/O 统计信息
+ */
 typedef struct
 {
-    unsigned long long reads_completed;  // 成功完成的读操作总数
-    unsigned long long read_merges;      // 读合并次数
-    unsigned long long read_sectors;     // 读取的扇区总数
-    unsigned long long reading_ms;       // 花费在读操作上的总毫秒数
-    unsigned long long writes_completed; // 成功完成的写操作总数
-    unsigned long long write_merges;     // 写合并次数
-    unsigned long long write_sectors;    // 写入的扇区总数
-    unsigned long long writing_ms;       // 花费在写操作上的总毫秒数
-    unsigned long long ios_in_progress;  // 当前正在进行的 I/O 操作数
-    unsigned long long iotime_ms;        // 所有 I/O 操作花费的总毫秒数
-    unsigned long long weighted_io_time; // 加权 I/O 时间（毫秒）
+    unsigned long long reads_completed;
+    unsigned long long read_merges;
+    unsigned long long read_sectors;
+    unsigned long long reading_ms;
+    unsigned long long writes_completed;
+    unsigned long long write_merges;
+    unsigned long long write_sectors;
+    unsigned long long writing_ms;
+    unsigned long long ios_in_progress;
+    unsigned long long iotime_ms;
+    unsigned long long weighted_io_time;
 } DiskStats;
 
+/**
+ * @brief 系统信息结构体
+ *
+ * 存储系统级别的静态信息
+ */
 typedef struct
 {
-    int cpu_num_cores;                     // CPU 核心数
-    long cpu_delay_us;                     // CPU 延迟（微秒）
-    long disk_delay_us;                    // 磁盘延迟（微秒）
-    unsigned long long root_disk_total_kb; // 磁盘总容量（KB）
-    unsigned long long root_disk_avail_kb; // 磁盘可用容量（KB）
-    char machine_id[33];                   // 机器 ID
-    char hostname[256];                    // 主机名
+    int cpu_num_cores;
+    unsigned long long root_disk_total_kb;
+    unsigned long long root_disk_avail_kb;
+    char machine_id[33];
+    char hostname[256];
 } SystemInfo;
 
-
-// 获取根目录挂载分区的磁盘统计信息
+/**
+ * @brief 获取根目录挂载分区的磁盘统计信息
+ *
+ * 通过解析 /proc/mounts 找到根目录挂载的设备，
+ * 然后从 /proc/diskstats 读取该设备的 I/O 统计信息。
+ *
+ * @param stats 指向 DiskStats 结构体的指针，用于存储结果
+ * @return 成功返回 0，失败返回 -1
+ */
 int get_root_diskstats(DiskStats *stats) {
-    // 检查输入参数是否有效
     if (!stats) return -1;
 
-    // 初始化 stats 结构体，避免使用未初始化的值
     memset(stats, 0, sizeof(DiskStats));
 
-    // 1. 获取根目录挂载的设备名
-    FILE *mounts_file = setmntent("/proc/mounts", "r"); // 打开 /proc/mounts 文件以读取挂载信息
+    FILE *mounts_file = setmntent("/proc/mounts", "r");
     if (!mounts_file) {
-        perror("setmntent"); // 打印错误信息
+        perror("setmntent");
         return -1;
     }
 
-    char root_device[256] = ""; // 存储根目录设备名的缓冲区
-    struct mntent *mount_entry; // 存储挂载信息的结构体指针
+    char root_device[256] = "";
+    struct mntent *mount_entry;
 
-    // 遍历 /proc/mounts 中的每一项挂载信息
     while ((mount_entry = getmntent(mounts_file)) != NULL) {
-        // 查找根目录的挂载项
         if (strcmp(mount_entry->mnt_dir, "/") == 0) {
-            strncpy(root_device, mount_entry->mnt_fsname, sizeof(root_device)); // 复制设备名
-            root_device[sizeof(root_device) - 1] = '\0'; // 确保字符串以 null 结尾，防止缓冲区溢出
-            break; // 找到根目录，退出循环
+            strncpy(root_device, mount_entry->mnt_fsname, sizeof(root_device));
+            root_device[sizeof(root_device) - 1] = '\0';
+            break;
         }
     }
-    endmntent(mounts_file); // 关闭 /proc/mounts 文件
+    endmntent(mounts_file);
 
-    // 如果没有找到根目录的挂载信息
     if (strlen(root_device) == 0) {
         fprintf(stderr, "Could not find root device in /proc/mounts\n");
         return -1;
     }
 
-    // 处理 /dev/ 前缀，/proc/diskstats 中不包含 /dev/
     if (strncmp(root_device, "/dev/", 5) == 0) {
-        memmove(root_device, root_device + 5, strlen(root_device) - 4); // 移除 "/dev/" 前缀
+        memmove(root_device, root_device + 5, strlen(root_device) - 4);
     }
 
-    // 2. 读取 /proc/diskstats
-    FILE *diskstats_file = fopen("/proc/diskstats", "r"); // 打开 /proc/diskstats 文件
+    FILE *diskstats_file = fopen("/proc/diskstats", "r");
     if (!diskstats_file) {
-        perror("/proc/diskstats"); // 打印错误信息
+        perror("/proc/diskstats");
         return -1;
     }
 
-    char line[1024]; // 存储 /proc/diskstats 文件中每一行的缓冲区
+    char line[1024];
 
-    // 遍历 /proc/diskstats 中的每一行
     while (fgets(line, sizeof(line), diskstats_file)) {
-        int major, minor;        // 主设备号和次设备号
-        char name[256];         // 设备名
+        int major, minor;
+        char name[256];
 
-        // 3. 解析并匹配设备名，兼容不同内核版本（11/14个字段），并处理可能的解析错误
         int fields_read;
         fields_read = sscanf(line, "%d %d %255s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
                    &major, &minor, name,
                    &stats->reads_completed, &stats->read_merges, &stats->read_sectors, &stats->reading_ms,
                    &stats->writes_completed, &stats->write_merges, &stats->write_sectors, &stats->writing_ms,
                    &stats->ios_in_progress, &stats->iotime_ms, &stats->weighted_io_time);
-        if (fields_read >= 11 && strcmp(name, root_device) == 0) { // 至少需要前11个字段才能判断设备名
-            fclose(diskstats_file); // 关闭文件
-            return 0; // 成功
+        if (fields_read >= 11 && strcmp(name, root_device) == 0) {
+            fclose(diskstats_file);
+            return 0;
         }
     }
 
-    fclose(diskstats_file); // 关闭文件
-    fprintf(stderr, "Could not find diskstats for root device: %s\n", root_device); // 打印错误信息
-    return -1; // 未找到匹配的行
+    fclose(diskstats_file);
+    fprintf(stderr, "Could not find diskstats for root device: %s\n", root_device);
+    return -1;
 }
 
-
-// 优化后的磁盘耗时测量函数
-long long measure_disk_io_time(int num_ops)
-{
-    const size_t file_size = 1024 * 1024; // 1MB 文件大小
-    const size_t buffer_size = 4096;      // 缓冲区大小
-
-    char template[] = "/tmp/disk_test_XXXXXX";
-
-    // 创建并打开临时文件
-    int fd = mkstemp(template);
-    if (fd == -1)
-        return -1; // 创建/打开失败
-
-    // 预分配文件空间
-    if (ftruncate(fd, file_size) == -1)
-    {
-        close(fd);
-        unlink(template);
-        return -1; // 预分配失败
-    }
-
-    char buffer[buffer_size];
-    // 填充缓冲区，避免读取未初始化内存
-    for (size_t i = 0; i < buffer_size; ++i)
-    { // 使用 ++i 更高效
-        buffer[i] = 'a' + (i % 26);
-    }
-
-    struct timespec start, end;
-
-    // 获取开始时间
-    if (clock_gettime(CLOCK_MONOTONIC, &start) == -1)
-    {
-        close(fd);
-        unlink(template);
-        return -1; // 获取开始时间失败
-    }
-
-    // 执行随机写操作
-    for (int i = 0; i < num_ops; ++i)
-    { // 使用 ++i
-        // 生成随机偏移量，确保不越界
-        off_t offset = rand() % (file_size - buffer_size);
-
-        // 执行原子写操作
-        if (pwrite(fd, buffer, buffer_size, offset) != buffer_size)
-        {
-            close(fd);
-            unlink(template);
-            return -1; // 写入失败
-        }
-    }
-
-    // 获取结束时间
-    if (clock_gettime(CLOCK_MONOTONIC, &end) == -1)
-    {
-        close(fd);
-        unlink(template);
-        return -1; // 获取结束时间失败
-    }
-
-    close(fd);
-    unlink(template);
-
-    // 计算并返回耗时（微秒）
-    long long elapsed_ns = (end.tv_sec - start.tv_sec) * 1000000000LL + (end.tv_nsec - start.tv_nsec);
-    return elapsed_ns / 1000;
-}
-
-// 安全的文件打开函数
+/**
+ * @brief 安全的文件打开函数
+ *
+ * 封装 fopen，在打开失败时自动打印错误信息
+ *
+ * @param filename 要打开的文件名
+ * @param mode 打开模式
+ * @return 成功返回文件指针，失败返回 NULL
+ */
 static FILE *safe_fopen(const char *filename, const char *mode)
 {
     FILE *fp = fopen(filename, mode);
@@ -243,7 +215,12 @@ static FILE *safe_fopen(const char *filename, const char *mode)
     return fp;
 }
 
-// 从 /proc/uptime 读取系统运行时间和空闲时间
+/**
+ * @brief 从 /proc/uptime 读取系统运行时间和空闲时间
+ *
+ * @param uptime 指向 Uptime 结构体的指针，用于存储结果
+ * @return 成功返回 0，失败返回 -1
+ */
 int read_uptime(Uptime *uptime)
 {
     FILE *fp = safe_fopen("/proc/uptime", "r");
@@ -260,7 +237,12 @@ int read_uptime(Uptime *uptime)
     return 0;
 }
 
-// 从 /proc/loadavg 读取负载信息和任务信息
+/**
+ * @brief 从 /proc/loadavg 读取负载信息和任务信息
+ *
+ * @param loadavg 指向 LoadAvg 结构体的指针，用于存储结果
+ * @return 成功返回 0，失败返回 -1
+ */
 int read_loadavg(LoadAvg *loadavg)
 {
     FILE *fp = safe_fopen("/proc/loadavg", "r");
@@ -279,7 +261,14 @@ int read_loadavg(LoadAvg *loadavg)
     return 0;
 }
 
-// 从 /proc/stat 读取 CPU 信息
+/**
+ * @brief 从 /proc/stat 读取 CPU 信息
+ *
+ * 读取 CPU 在各状态下花费的时间（user/nice/system/idle/iowait/irq/softirq/steal）
+ *
+ * @param cpuinfo 指向 CpuInfo 结构体的指针，用于存储结果
+ * @return 成功返回 0，失败返回 -1
+ */
 int read_cpu_info(CpuInfo *cpuinfo)
 {
     FILE *fp = safe_fopen("/proc/stat", "r");
@@ -301,7 +290,14 @@ int read_cpu_info(CpuInfo *cpuinfo)
     return 0;
 }
 
-// 从 /proc/meminfo 读取内存信息
+/**
+ * @brief 从 /proc/meminfo 读取内存信息
+ *
+ * 读取 MemTotal、MemFree、Buffers、Cached 并计算已使用内存
+ *
+ * @param meminfo 指向 MemInfo 结构体的指针，用于存储结果
+ * @return 成功返回 0，失败返回 -1
+ */
 int read_mem_info(MemInfo *meminfo)
 {
     FILE *fp = safe_fopen("/proc/meminfo", "r");
@@ -335,7 +331,14 @@ int read_mem_info(MemInfo *meminfo)
     return 0;
 }
 
-// 从 /proc/net/tcp 和 /proc/net/udp 读取 TCP/UDP 连接数
+/**
+ * @brief 从 /proc/net/tcp 和 /proc/net/udp 读取 TCP/UDP 连接数
+ *
+ * 通过统计文件中包含冒号的行数来计算连接数
+ *
+ * @param netinfo 指向 NetInfo 结构体的指针，用于存储结果
+ * @return 成功返回 0
+ */
 int read_net_info(NetInfo *netinfo)
 {
     netinfo->tcp_connections = 0;
@@ -350,18 +353,17 @@ int read_net_info(NetInfo *netinfo)
         if (fp)
         {
             char line[256];
-            // 跳过第一行标题行
             if (fgets(line, sizeof(line), fp) == NULL)
             {
                 fprintf(stderr, "Error reading header line from %s\n", files[i]);
                 fclose(fp);
-                continue; // 继续下一个文件
+                continue;
             }
 
             while (fgets(line, sizeof(line), fp))
             {
                 if (strchr(line, ':') != NULL)
-                { // 使用 strchr 效率更高
+                {
                     (*counts[i])++;
                 }
             }
@@ -375,9 +377,22 @@ int read_net_info(NetInfo *netinfo)
     return 0;
 }
 
-// 获取 Linux 服务器的 machine-id
+/**
+ * @brief 获取 Linux 服务器的 machine-id
+ *
+ * 依次尝试从 /etc/machine-id 和 /var/lib/dbus/machine-id 读取
+ *
+ * @param buffer 用于存储结果的缓冲区
+ * @param buffer_size 缓冲区大小
+ * @return 成功返回 0，失败返回 -1（此时 buffer 包含 "unknown"）
+ */
 int get_machine_id(char *buffer, size_t buffer_size)
 {
+    if (!buffer || buffer_size == 0)
+    {
+        return -1;
+    }
+    buffer[0] = '\0';
     const char *paths[] = {"/etc/machine-id", "/var/lib/dbus/machine-id", NULL};
     for (int i = 0; paths[i] != NULL; i++)
     {
@@ -387,30 +402,46 @@ int get_machine_id(char *buffer, size_t buffer_size)
             if (fgets(buffer, buffer_size, fp))
             {
                 fclose(fp);
-                buffer[strcspn(buffer, "\n")] = 0; // 安全去除换行符
+                buffer[strcspn(buffer, "\n")] = 0;
                 return 0;
             }
             fclose(fp);
         }
     }
-    strncpy(buffer, "unknown", buffer_size);
-    buffer[buffer_size - 1] = '\0';
+    snprintf(buffer, buffer_size, "unknown");
     return -1;
 }
 
-// 获取主机名
+/**
+ * @brief 获取主机名
+ *
+ * @param buffer 用于存储结果的缓冲区
+ * @param buffer_size 缓冲区大小
+ * @return 成功返回 0，失败返回 -1（此时 buffer 包含 "unknown"）
+ */
 int get_hostname(char *buffer, size_t buffer_size)
 {
-    if (gethostname(buffer, buffer_size) != 0)
+    if (!buffer || buffer_size == 0)
     {
-        strncpy(buffer, "unknown", buffer_size);
-        buffer[buffer_size - 1] = '\0';
         return -1;
     }
+    buffer[0] = '\0';
+    if (gethostname(buffer, buffer_size) != 0)
+    {
+        snprintf(buffer, buffer_size, "unknown");
+        return -1;
+    }
+    buffer[buffer_size - 1] = '\0';
     return 0;
 }
 
-// 去除字符串的前导空格
+/**
+ * @brief 去除字符串的前导空白字符
+ *
+ * 原地修改字符串，移除开头的空格、制表符、换行符和回车符
+ *
+ * @param str 要处理的字符串
+ */
 void trim_leading_whitespace(char *str)
 {
     char *start = str;
@@ -421,14 +452,19 @@ void trim_leading_whitespace(char *str)
     memmove(str, start, strlen(start) + 1);
 }
 
-// 获取默认路由的网口名称
+/**
+ * @brief 获取默认路由的网口名称
+ *
+ * 通过解析 /proc/net/route 找到默认路由对应的网络接口
+ *
+ * @return 成功返回网口名称字符串（需调用者 free），失败返回 NULL
+ */
 char *get_default_interface()
 {
     FILE *fp;
     char line[256];
     char *iface = NULL;
 
-    // 打开 /proc/net/route 文件
     fp = fopen("/proc/net/route", "r");
     if (!fp)
     {
@@ -436,22 +472,22 @@ char *get_default_interface()
         return NULL;
     }
 
-    // 跳过表头
     fgets(line, sizeof(line), fp);
 
-    // 遍历每一行，找到默认路由
     while (fgets(line, sizeof(line), fp))
     {
         char name[32];
         unsigned long dest, flags;
 
-        // 解析网口名称、目标地址和路由标志
         if (sscanf(line, "%31s %lx %*x %lx", name, &dest, &flags) == 3)
         {
-            // 检查是否为默认路由（目标地址为 0.0.0.0，且标志包含 RTF_UP 和 RTF_GATEWAY）
             if (dest == 0 && (flags & 0x3) == 0x3)
-            { // 0x3 = RTF_UP | RTF_GATEWAY
+            {
                 iface = strdup(name);
+                if (!iface)
+                {
+                    perror("strdup");
+                }
                 break;
             }
         }
@@ -462,14 +498,21 @@ char *get_default_interface()
     return iface;
 }
 
-// 获取默认路由网口的上传和下载流量数据（单位为字节）
+/**
+ * @brief 获取默认路由网口的流量数据
+ *
+ * 通过解析 /proc/net/dev 获取默认网口的接收和发送字节数
+ *
+ * @param rx_bytes 用于存储接收字节数的指针
+ * @param tx_bytes 用于存储发送字节数的指针
+ * @return 成功返回 0，失败返回 -1
+ */
 int get_default_interface_traffic(unsigned long *rx_bytes, unsigned long *tx_bytes)
 {
     FILE *fp;
     char line[256];
     char *iface = get_default_interface();
 
-    // 初始化返回值为 0
     *rx_bytes = 0;
     *tx_bytes = 0;
 
@@ -479,7 +522,6 @@ int get_default_interface_traffic(unsigned long *rx_bytes, unsigned long *tx_byt
         return -1;
     }
 
-    // 打开 /proc/net/dev 文件
     fp = fopen("/proc/net/dev", "r");
     if (!fp)
     {
@@ -488,24 +530,19 @@ int get_default_interface_traffic(unsigned long *rx_bytes, unsigned long *tx_byt
         return -1;
     }
 
-    // 跳过前两行（表头）
     fgets(line, sizeof(line), fp);
     fgets(line, sizeof(line), fp);
 
-    // 遍历每一行，找到默认网口的流量数据
     while (fgets(line, sizeof(line), fp))
     {
         char name[32];
         unsigned long rx, tx;
 
-        // 解析网口名称和流量数据
         if (sscanf(line, "%31[^:]: %lu %*lu %*lu %*lu %*lu %*lu %*lu %*lu %lu",
                    name, &rx, &tx) == 3)
         {
-            // 去除接口名称的前导空格
             trim_leading_whitespace(name);
 
-            // 匹配默认网口
             if (strcmp(name, iface) == 0)
             {
                 *rx_bytes = rx;
@@ -520,7 +557,16 @@ int get_default_interface_traffic(unsigned long *rx_bytes, unsigned long *tx_byt
     return 0;
 }
 
-// 获取磁盘空间信息，单位为 KB
+/**
+ * @brief 获取磁盘空间信息
+ *
+ * 使用 statvfs 系统调用获取指定路径的磁盘空间信息
+ *
+ * @param path 要查询的路径（NULL 或空字符串默认为 "/"）
+ * @param total_size_kb 用于存储总容量（KB）的指针，可为 NULL
+ * @param available_size_kb 用于存储可用容量（KB）的指针，可为 NULL
+ * @return 成功返回 0，失败返回 -1
+ */
 int get_disk_space_kb(const char *path, unsigned long long *total_size_kb, unsigned long long *available_size_kb)
 {
     const char *effective_path = (path && *path) ? path : "/";
@@ -528,7 +574,7 @@ int get_disk_space_kb(const char *path, unsigned long long *total_size_kb, unsig
 
     if (statvfs(effective_path, &vfs) == -1)
     {
-        perror("statvfs"); // 打印 statvfs 错误信息
+        perror("statvfs");
         return -1;
     }
 
@@ -544,106 +590,18 @@ int get_disk_space_kb(const char *path, unsigned long long *total_size_kb, unsig
     return 0;
 }
 
-// 计算时间差（微秒）
-static long time_diff_us(struct timespec *start, struct timespec *end)
-{
-    return (end->tv_sec - start->tv_sec) * 1000000 + (end->tv_nsec - start->tv_nsec) / 1000;
-}
-
-// 计算圆周率并返回时间（微秒）
-long calculate_pi(int iterations)
-{
-    if (iterations <= 0)
-    {
-        fprintf(stderr, "Iterations must be positive\n");
-        return -1; // 返回错误码
-    }
-
-    double pi = 0.0;
-    int sign = 1;
-    struct timespec start, end;
-
-    if (clock_gettime(CLOCK_MONOTONIC, &start) == -1)
-    {
-        perror("clock_gettime");
-        return -1;
-    }
-
-    for (int i = 0; i < iterations; i++)
-    {
-        pi += sign * (4.0 / (2 * i + 1));
-        sign *= -1;
-    }
-
-    if (clock_gettime(CLOCK_MONOTONIC, &end) == -1)
-    {
-        perror("clock_gettime");
-        return -1;
-    }
-
-    return time_diff_us(&start, &end);
-}
-
-
-
-// 获取磁盘延迟（微秒）
-long get_disk_delay(int iterations)
-{
-    if (iterations <= 0)
-    {
-        fprintf(stderr, "Iterations must be positive\n");
-        return -1; // 返回错误码
-    }
-
-    struct timespec start, end;
-    if (clock_gettime(CLOCK_MONOTONIC, &start) == -1)
-    {
-        perror("clock_gettime");
-        return -1;
-    }
-
-    for (int i = 0; i < iterations; i++)
-    {
-        char filename[32]; // 文件名更短，减少内存占用
-        snprintf(filename, sizeof(filename), "tmp%d", i);
-
-        int fd = open(filename, O_CREAT | O_WRONLY | O_TRUNC, 0644); // 添加 O_TRUNC
-        if (fd == -1)
-        {
-            perror("open");
-            continue; // 继续下一个迭代，避免提前退出
-        }
-
-        if (write(fd, "test", 4) != 4)
-        {
-            perror("write");
-        }
-
-        if (close(fd) == -1)
-        {
-            perror("close");
-        }
-
-        if (unlink(filename) == -1)
-        {
-            perror("unlink");
-        }
-    }
-
-    if (clock_gettime(CLOCK_MONOTONIC, &end) == -1)
-    {
-        perror("clock_gettime");
-        return -1;
-    }
-
-    return time_diff_us(&start, &end);
-}
-
-// 使用外部 curl 命令发送 POST 请求
+/**
+ * @brief 使用外部 curl 命令发送 POST 请求
+ *
+ * 构造并执行 curl 命令，将数据以 POST 方式发送到指定 URL
+ *
+ * @param url 目标 URL
+ * @param data 要发送的数据（URL 编码格式）
+ * @return 成功返回 curl 的退出码（0 表示成功），失败返回 -1
+ */
 int send_post_request(const char *url, const char *data)
 {
     char command[4096];
-    // 使用更安全的 snprintf，并检查返回值
     int ret = snprintf(command, sizeof(command), "curl -X POST -d '%s' '%s'", data, url);
     if (ret < 0 || ret >= sizeof(command))
     {
@@ -653,7 +611,19 @@ int send_post_request(const char *url, const char *data)
     return system(command);
 }
 
-// 采集所有指标
+/**
+ * @brief 采集所有系统指标
+ *
+ * 调用各个采集函数，将结果存储到对应的结构体中
+ *
+ * @param uptime 用于存储运行时间信息
+ * @param loadavg 用于存储负载信息
+ * @param cpuinfo 用于存储 CPU 信息
+ * @param meminfo 用于存储内存信息
+ * @param netinfo 用于存储网络信息
+ * @param sysinfo 用于存储系统信息
+ * @param diskstats 用于存储磁盘统计信息
+ */
 void collect_metrics(Uptime *uptime, LoadAvg *loadavg, CpuInfo *cpuinfo, MemInfo *meminfo, NetInfo *netinfo, SystemInfo *sysinfo, DiskStats *diskstats)
 {
     if (read_uptime(uptime) != 0)
@@ -689,8 +659,6 @@ void collect_metrics(Uptime *uptime, LoadAvg *loadavg, CpuInfo *cpuinfo, MemInfo
     }
 
     sysinfo->cpu_num_cores = sysconf(_SC_NPROCESSORS_ONLN);
-    sysinfo->cpu_delay_us = calculate_pi(100000); // 使用 calculate_pi 作为 CPU 延迟的近似值
-    sysinfo->disk_delay_us = measure_disk_io_time(10);
     if (get_disk_space_kb("/", &sysinfo->root_disk_total_kb, &sysinfo->root_disk_avail_kb) != 0)
     {
         fprintf(stderr, "Failed to get disk space\n");
@@ -701,23 +669,44 @@ void collect_metrics(Uptime *uptime, LoadAvg *loadavg, CpuInfo *cpuinfo, MemInfo
     }
 }
 
-
-
-// 将指标转换为 values=v1,v2,v3,... 格式的字符串
+/**
+ * @brief 将指标转换为 values=v1,v2,v3,... 格式的字符串
+ *
+ * 将所有采集的指标按固定顺序拼接成逗号分隔的字符串，
+ * 并添加 "values=" 前缀
+ *
+ * 输出字段顺序：
+ * timestamp, uptime_s, load_1min, load_5min, load_15min, running_tasks, total_tasks,
+ * cpu_user, cpu_system, cpu_nice, cpu_idle, cpu_iowait, cpu_irq, cpu_softirq, cpu_steal,
+ * mem_total_mib, mem_free_mib, mem_used_mib, mem_buff_cache_mib,
+ * tcp_connections, udp_connections, net_rx_bytes, net_tx_bytes,
+ * cpu_num_cores, root_disk_total_kb, root_disk_avail_kb,
+ * disk_reads, disk_writes, disk_reading_ms, disk_writing_ms,
+ * disk_iotime_ms, disk_ios_in_progress, disk_weighted_io_time,
+ * machine_id, hostname
+ *
+ * @param timestamp 时间戳
+ * @param uptime 运行时间信息
+ * @param loadavg 负载信息
+ * @param cpuinfo CPU 信息
+ * @param meminfo 内存信息
+ * @param netinfo 网络信息
+ * @param sysinfo 系统信息
+ * @param diskstats 磁盘统计信息
+ * @return 成功返回分配的字符串指针（需调用者 free），失败返回 NULL
+ */
 char *metrics_to_kv(int timestamp, Uptime *uptime, LoadAvg *loadavg, CpuInfo *cpuinfo, MemInfo *meminfo, NetInfo *netinfo, SystemInfo *sysinfo, DiskStats *diskstats) {
-    char *kv_string = malloc(8192); // Increased buffer size for safety
+    char *kv_string = malloc(8192);
     if (!kv_string) {
         perror("malloc");
         return NULL;
     }
 
-    // Prepare a temporary buffer for the values only
-    char values_buffer[8192]; // Increased buffer size
+    char values_buffer[8192];
     int values_len = 0;
 
-    // Use snprintf to build the comma-separated values
     values_len += snprintf(values_buffer + values_len, sizeof(values_buffer) - values_len,
-                           "%ld,%ld,%.2lf,%.2lf,%.2lf,%d,%d,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.2lf,%.2lf,%.2lf,%.2lf,%d,%d,%lu,%lu,%d,%ld,%lld,%llu,%llu,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%s,%s",
+                           "%ld,%ld,%.2lf,%.2lf,%.2lf,%d,%d,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%.2lf,%.2lf,%.2lf,%.2lf,%d,%d,%lu,%lu,%d,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%s,%s",
                            timestamp,(long)uptime->uptime_s,
                            loadavg->load_1min, loadavg->load_5min, loadavg->load_15min,
                            loadavg->running_tasks, loadavg->total_tasks,
@@ -728,7 +717,7 @@ char *metrics_to_kv(int timestamp, Uptime *uptime, LoadAvg *loadavg, CpuInfo *cp
                            meminfo->mem_buff_cache_mib,
                            netinfo->tcp_connections, netinfo->udp_connections,
                            netinfo->default_interface_net_rx_bytes, netinfo->default_interface_net_tx_bytes,
-                           sysinfo->cpu_num_cores, sysinfo->cpu_delay_us, sysinfo->disk_delay_us,
+                           sysinfo->cpu_num_cores,
                            sysinfo->root_disk_total_kb, sysinfo->root_disk_avail_kb,
                            diskstats->reads_completed, diskstats->writes_completed, diskstats->reading_ms, diskstats->writing_ms,
                            diskstats->iotime_ms, diskstats->ios_in_progress,diskstats->weighted_io_time,
@@ -740,7 +729,6 @@ char *metrics_to_kv(int timestamp, Uptime *uptime, LoadAvg *loadavg, CpuInfo *cp
         return NULL;
     }
 
-    // Now build the final "values=..." string
     int kv_len = snprintf(kv_string, 8192, "values=%s", values_buffer);
 
     if (kv_len < 0 || kv_len >= 8192) {
@@ -752,8 +740,16 @@ char *metrics_to_kv(int timestamp, Uptime *uptime, LoadAvg *loadavg, CpuInfo *cp
     return kv_string;
 }
 
-
-
+/**
+ * @brief 程序入口
+ *
+ * 解析命令行参数，获取目标 URL，然后进入无限循环：
+ * 每 10 秒采集一次指标并上报
+ *
+ * @param argc 参数个数
+ * @param argv 参数数组
+ * @return 正常情况不返回，参数错误返回 EXIT_FAILURE
+ */
 int main(int argc, char *argv[])
 {
     char url[256] = "";
@@ -764,8 +760,7 @@ int main(int argc, char *argv[])
         switch (opt)
         {
         case 'u':
-            strncpy(url, optarg, sizeof(url) - 1);
-            url[sizeof(url) - 1] = '\0';
+            snprintf(url, sizeof(url), "%s", optarg);
             break;
         default:
             fprintf(stderr, "Usage: %s -u <url>\n", argv[0]);
