@@ -432,7 +432,7 @@ int get_disk_space_kb(const char *path, unsigned long long *total_size_kb, unsig
 int send_post_request(const char *url, const char *data)
 {
     char command[4096];
-    int ret = snprintf(command, sizeof(command), "curl -X POST -d '%s' '%s'", data, url);
+    int ret = snprintf(command, sizeof(command), "curl -s -X POST -d '%s' '%s'", data, url);
     if (ret < 0 || ret >= sizeof(command))
     {
         fprintf(stderr, "Error: Command too long or encoding error\n");
