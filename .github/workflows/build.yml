@@ -1,7 +1,8 @@
 name: Build and Release
 
 on:
-  tags:
+  push:
+    tags:
       - 'v*'
   workflow_dispatch:
 
