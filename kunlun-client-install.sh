@@ -19,6 +19,10 @@ print_error() {
     echo -e "\033[31m[ERROR]\033[0m $1"
 }
 
+print_warning() {
+    echo -e "\033[33m[WARNING]\033[0m $1"
+}
+
 is_root() {
     [[ "$EUID" -eq 0 ]]
 }
@@ -89,8 +93,49 @@ install_package() {
     fi
 }
 
+uninstall_kunlun() {
+    local sudo_cmd
+    sudo_cmd=$(get_sudo)
+
+    local need_reload=0
+
+    if systemctl is-active "$KUNLUN_SERVICE" &>/dev/null; then
+        print_info "停止运行中的服务..."
+        $sudo_cmd systemctl stop "$KUNLUN_SERVICE"
+        need_reload=1
+    fi
+
+    if systemctl is-enabled "$KUNLUN_SERVICE" &>/dev/null; then
+        print_info "禁用服务自启动..."
+        $sudo_cmd systemctl disable "$KUNLUN_SERVICE"
+        need_reload=1
+    fi
+
+    if [[ -f "$KUNLUN_SERVICE_PATH" ]]; then
+        print_info "删除服务文件..."
+        $sudo_cmd rm -f "$KUNLUN_SERVICE_PATH"
+        need_reload=1
+    fi
+
+    if [[ -f "$KUNLUN_BIN" ]]; then
+        print_info "删除二进制文件..."
+        rm -f "$KUNLUN_BIN"
+    fi
+
+    if [[ $need_reload -eq 1 ]]; then
+        $sudo_cmd systemctl daemon-reload
+    fi
+}
+
 install_kunlun() {
+    local report_url="$1"
+
     print_info "开始安装 Kunlun..."
+
+    if [[ -f "$KUNLUN_SERVICE_PATH" ]] || [[ -f "$KUNLUN_BIN" ]]; then
+        print_warning "检测到已安装的 Kunlun，正在卸载旧版本..."
+        uninstall_kunlun
+    fi
 
     if ! command -v curl &> /dev/null; then
         print_info "正在安装 curl..."
@@ -107,15 +152,18 @@ install_kunlun() {
 
     local download_url="$RELEASES_BASE_URL/$version/kunlun-client-linux-$arch"
 
-    read -p "请输入上报地址: " REPORT_URL
-    if [[ -z "$REPORT_URL" ]]; then
+    if [[ -z "$report_url" ]]; then
+        read -p "请输入上报地址: " report_url
+    fi
+
+    if [[ -z "$report_url" ]]; then
         print_error "上报地址不能为空"
         exit 1
     fi
 
     print_info "验证上报地址..."
     local response
-    response=$(curl -s "$REPORT_URL" 2>/dev/null || true)
+    response=$(curl -s "$report_url" 2>/dev/null || true)
     if [[ "$response" != *"kunlun"* ]]; then
         print_error "上报地址验证失败：GET 请求返回内容不包含 'kunlun'"
         exit 1
@@ -141,7 +189,7 @@ Description=Kunlun System Monitor
 After=network.target
 
 [Service]
-ExecStart="$KUNLUN_BIN" -u "$REPORT_URL"
+ExecStart="$KUNLUN_BIN" -u "$report_url"
 Restart=always
 RestartSec=5
 User=$USER
@@ -162,25 +210,15 @@ EOF
     echo "查看日志: journalctl -u $KUNLUN_SERVICE -f"
 }
 
-uninstall_kunlun() {
-    print_info "正在卸载 Kunlun..."
-
-    local sudo_cmd
-    sudo_cmd=$(get_sudo)
-
-    if systemctl is-active "$KUNLUN_SERVICE" &>/dev/null; then
-        $sudo_cmd systemctl stop "$KUNLUN_SERVICE"
-    fi
-
-    if systemctl is-enabled "$KUNLUN_SERVICE" &>/dev/null; then
-        $sudo_cmd systemctl disable "$KUNLUN_SERVICE"
-    fi
-
-    $sudo_cmd rm -f "$KUNLUN_SERVICE_PATH"
-    rm -f "$KUNLUN_BIN"
-    $sudo_cmd systemctl daemon-reload
-
-    print_success "Kunlun 已卸载"
+show_help() {
+    echo "用法: $0 [命令] [参数]"
+    echo ""
+    echo "命令:"
+    echo "  install <url>    直接安装（url 为上报地址）"
+    echo "  uninstall        卸载 Kunlun"
+    echo "  help             显示帮助信息"
+    echo ""
+    echo "不带参数运行将进入交互式菜单模式。"
 }
 
 show_menu() {
@@ -195,24 +233,49 @@ show_menu() {
 }
 
 main() {
-    show_menu
-    read -p "请选择 (1-3): " choice
+    local command="$1"
+    local arg="$2"
 
-    case "$choice" in
-        1)
-            install_kunlun || exit 1
+    case "$command" in
+        install)
+            install_kunlun "$arg" || exit 1
             ;;
-        2)
+        uninstall)
+            print_info "正在卸载 Kunlun..."
             uninstall_kunlun
+            print_success "Kunlun 已卸载"
             ;;
-        3)
-            exit 0
+        help|--help|-h)
+            show_help
+            ;;
+        "")
+            show_menu
+            read -p "请选择 (1-3): " choice
+
+            case "$choice" in
+                1)
+                    install_kunlun "" || exit 1
+                    ;;
+                2)
+                    print_info "正在卸载 Kunlun..."
+                    uninstall_kunlun
+                    print_success "Kunlun 已卸载"
+                    ;;
+                3)
+                    exit 0
+                    ;;
+                *)
+                    print_error "无效选项"
+                    exit 1
+                    ;;
+            esac
             ;;
         *)
-            print_error "无效选项"
+            print_error "未知命令: $command"
+            show_help
             exit 1
             ;;
     esac
 }
 
-main
+main "$@"
