@@ -62,7 +62,7 @@ systemctl status kunlun
 
 ### 上报地址验证
 
-安装时需提供上报地址。Kunlun 会先发送 GET 请求验证地址有效性，要求返回内容包含 `kunlun` 字符串。验证通过后，将按固定间隔（10 秒）通过 POST 请求上报监控数据。
+安装时需提供上报地址。Kunlun 会先发送 GET 请求验证地址有效性，要求返回内容包含 `kunlun` 字符串。验证通过后，将按固定间隔（10 秒）通过 POST 请求（Content-Type: application/x-www-form-urlencoded）上报逗号分隔的 35 个监控数据，数据键为 values
 
 ### 数据字段
 
@@ -89,8 +89,8 @@ systemctl status kunlun
 | `mem_buff_cache_mib` | `double` | 缓冲区/缓存内存（MiB） |
 | `tcp_connections` | `int` | TCP 连接数 |
 | `udp_connections` | `int` | UDP 连接数 |
-| `net_rx_bytes` | `unsigned long` | 默认网口接收字节数 |
-| `net_tx_bytes` | `unsigned long` | 默认网口发送字节数 |
+| `net_rx_bytes` | `unsigned long` | 所有默认网口接收字节数 |
+| `net_tx_bytes` | `unsigned long` | 所有默认网口发送字节数 |
 | `cpu_num_cores` | `int` | CPU 核心数 |
 | `root_disk_total_kb` | `unsigned long long` | 根分区总容量（KB） |
 | `root_disk_avail_kb` | `unsigned long long` | 根分区可用容量（KB） |
