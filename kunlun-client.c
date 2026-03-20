@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <sys/sysinfo.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <time.h>
@@ -445,165 +446,57 @@ void trim_leading_whitespace(char *str)
 }
 
 /**
- * @brief 检查网口名是否已在列表中
+ * @brief 判断网口是否为物理网卡
  *
- * @param list 网口名列表
- * @param count 列表中元素数量
- * @param name 待检查的网口名
- * @return 存在返回 1，不存在返回 0
+ * 通过两个条件判断：
+ * 1. 存在 /sys/class/net/<iface>/device 目录（指向 PCI 或 USB 等物理设备）
+ * 2. 接口类型为 1（ARPHRD_ETHER，即以太网）
+ *
+ * @param iface 网口名称
+ * @return 是物理网卡返回 1，否则返回 0
  */
-static int interface_list_contains(char **list, int count, const char *name)
+static int is_physical_interface(const char *iface)
 {
-    for (int i = 0; i < count; i++)
+    if (!iface || *iface == '\0')
     {
-        if (strcmp(list[i], name) == 0)
-        {
-            return 1;
-        }
+        return 0;
     }
-    return 0;
-}
 
-/**
- * @brief 释放网口列表内存
- *
- * @param list 网口名列表
- * @param count 列表中元素数量
- */
-static void free_interface_list(char **list, int count)
-{
-    for (int i = 0; i < count; i++)
+    char path[256];
+    struct stat st;
+    FILE *fp;
+    int type;
+
+    /* 检查 device 目录是否存在 */
+    snprintf(path, sizeof(path), "/sys/class/net/%s/device", iface);
+    if (stat(path, &st) != 0)
     {
-        free(list[i]);
+        return 0;
     }
-}
 
-/**
- * @brief 从 IPv4 路由表收集默认路由网口
- *
- * 解析 /proc/net/route，查找目标地址为 0.0.0.0 且标志包含 RTF_UP|RTF_GATEWAY 的路由。
- *
- * @param list 网口名列表（输出）
- * @param max_count 列表最大容量
- * @param count 当前列表元素数量（输入/输出）
- * @return 新增的网口数量
- */
-static int collect_default_interfaces_ipv4(char **list, int max_count, int *count)
-{
-    FILE *fp = fopen("/proc/net/route", "r");
+    /* 检查 type 文件内容是否为 1（ARPHRD_ETHER） */
+    snprintf(path, sizeof(path), "/sys/class/net/%s/type", iface);
+    fp = fopen(path, "r");
     if (!fp)
     {
         return 0;
     }
 
-    char line[256];
-    int added = 0;
-
-    /* 跳过标题行 */
-    fgets(line, sizeof(line), fp);
-
-    while (fgets(line, sizeof(line), fp) && *count < max_count)
+    if (fscanf(fp, "%d", &type) != 1)
     {
-        char name[32];
-        unsigned long dest, flags;
-
-        if (sscanf(line, "%31s %lx %*x %lx", name, &dest, &flags) == 3)
-        {
-            /* 默认路由：dest == 0 且 flags 包含 RTF_UP(0x1) | RTF_GATEWAY(0x2) */
-            if (dest == 0 && (flags & 0x3) == 0x3)
-            {
-                /* 去重：避免重复添加同一网口 */
-                if (!interface_list_contains(list, *count, name))
-                {
-                    list[*count] = strdup(name);
-                    if (list[*count])
-                    {
-                        (*count)++;
-                        added++;
-                    }
-                }
-            }
-        }
-    }
-
-    fclose(fp);
-    return added;
-}
-
-/**
- * @brief 从 IPv6 路由表收集默认路由网口
- *
- * 解析 /proc/net/ipv6_route，查找目标地址全为 0 且前缀长度为 0 的默认路由。
- *
- * @param list 网口名列表（输出）
- * @param max_count 列表最大容量
- * @param count 当前列表元素数量（输入/输出）
- * @return 新增的网口数量
- */
-static int collect_default_interfaces_ipv6(char **list, int max_count, int *count)
-{
-    FILE *fp = fopen("/proc/net/ipv6_route", "r");
-    if (!fp)
-    {
+        fclose(fp);
         return 0;
     }
-
-    char line[512];
-    int added = 0;
-
-    while (fgets(line, sizeof(line), fp) && *count < max_count)
-    {
-        char dest[33];
-        char gateway[33];
-        int prefix_len, metric, refcnt, use;
-        unsigned long flags;
-        char name[32];
-
-        /* /proc/net/ipv6_route 格式：
-         * dest(32字符) prefix_len gateway(32字符) metric refcnt use flags iface
-         */
-        int fields = sscanf(line, "%32s %02x %32s %x %x %x %lx %31s",
-                            dest, &prefix_len, gateway, &metric, &refcnt, &use, &flags, name);
-
-        if (fields >= 8)
-        {
-            /* 检查是否为默认路由：目标地址全为 0 且前缀长度为 0 */
-            int is_default = 1;
-            for (int i = 0; i < 32; i++)
-            {
-                if (dest[i] != '0')
-                {
-                    is_default = 0;
-                    break;
-                }
-            }
-
-            /* 默认路由：dest 全 0，prefix_len == 0，flags 包含 RTF_UP|RTF_GATEWAY */
-            if (is_default && prefix_len == 0 && (flags & 0x3) == 0x3)
-            {
-                /* 去重：避免重复添加同一网口 */
-                if (!interface_list_contains(list, *count, name))
-                {
-                    list[*count] = strdup(name);
-                    if (list[*count])
-                    {
-                        (*count)++;
-                        added++;
-                    }
-                }
-            }
-        }
-    }
-
     fclose(fp);
-    return added;
+
+    return (type == 1);
 }
 
 /**
- * @brief 获取默认路由网口的流量统计
+ * @brief 获取所有物理网卡的流量统计
  *
- * 同时支持 IPv4 和 IPv6 路由表，累加所有默认路由网口的流量。
- * 适用于单栈 IPv4、单栈 IPv6、双栈等场景。
+ * 遍历 /sys/class/net 目录，识别物理网卡，然后从 /proc/net/dev 读取流量并累加。
+ * 物理网卡判断标准：存在 device 目录且类型为以太网（type=1）。
  *
  * @param rx_bytes 输出参数，接收字节数（累加）
  * @param tx_bytes 输出参数，发送字节数（累加）
@@ -614,16 +507,38 @@ int get_default_interface_traffic(unsigned long *rx_bytes, unsigned long *tx_byt
     *rx_bytes = 0;
     *tx_bytes = 0;
 
-    char *ifaces[16];
-    int iface_count = 0;
-
-    /* 收集所有默认路由网口（IPv4 + IPv6） */
-    collect_default_interfaces_ipv4(ifaces, 16, &iface_count);
-    collect_default_interfaces_ipv6(ifaces, 16, &iface_count);
-
-    if (iface_count == 0)
+    /* 打开 /sys/class/net 目录 */
+    DIR *dir = opendir("/sys/class/net");
+    if (!dir)
     {
-        fprintf(stderr, "Failed to find any default interface (tried IPv4 and IPv6 routes)\n");
+        perror("Failed to open /sys/class/net");
+        return -1;
+    }
+
+    /* 收集所有物理网卡名称 */
+    char phys_ifaces[64][32];
+    int phys_count = 0;
+    struct dirent *entry;
+
+    while ((entry = readdir(dir)) != NULL && phys_count < 64)
+    {
+        if (entry->d_name[0] == '.')
+        {
+            continue;
+        }
+
+        if (is_physical_interface(entry->d_name))
+        {
+            strncpy(phys_ifaces[phys_count], entry->d_name, 31);
+            phys_ifaces[phys_count][31] = '\0';
+            phys_count++;
+        }
+    }
+    closedir(dir);
+
+    if (phys_count == 0)
+    {
+        fprintf(stderr, "No physical network interface found\n");
         return -1;
     }
 
@@ -632,7 +547,6 @@ int get_default_interface_traffic(unsigned long *rx_bytes, unsigned long *tx_byt
     if (!fp)
     {
         perror("Failed to open /proc/net/dev");
-        free_interface_list(ifaces, iface_count);
         return -1;
     }
 
@@ -652,17 +566,20 @@ int get_default_interface_traffic(unsigned long *rx_bytes, unsigned long *tx_byt
         {
             trim_leading_whitespace(name);
 
-            /* 如果是默认路由网口，累加流量 */
-            if (interface_list_contains(ifaces, iface_count, name))
+            /* 检查是否为物理网卡 */
+            for (int i = 0; i < phys_count; i++)
             {
-                *rx_bytes += rx;
-                *tx_bytes += tx;
+                if (strcmp(name, phys_ifaces[i]) == 0)
+                {
+                    *rx_bytes += rx;
+                    *tx_bytes += tx;
+                    break;
+                }
             }
         }
     }
 
     fclose(fp);
-    free_interface_list(ifaces, iface_count);
     return 0;
 }
 
